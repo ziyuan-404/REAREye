@@ -18,6 +18,7 @@ import android.os.Looper
 import android.os.Process
 import android.util.Base64
 import android.view.View
+import android.widget.RemoteViews
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.highcapable.kavaref.KavaRef.Companion.asResolver
@@ -75,6 +76,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipFile
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 @OptIn(DexKitExperimentalApi::class)
 class RearWidgetHook : RoxyHooker() {
@@ -293,6 +296,9 @@ class RearWidgetHook : RoxyHooker() {
     }
 
     private fun releaseForReload(): Boolean {
+        RearNotificationCards.post = null
+        RearNotificationCards.remove = null
+        RearNotificationCards.reconcile = null
         managerEpoch.incrementAndGet()
         invalidateApiConnections()
         var success = unregisterHookBootstrapReceiver()
@@ -325,6 +331,9 @@ class RearWidgetHook : RoxyHooker() {
                 AppProperties.BUILD_CHANNEL.equals("dev", ignoreCase = true)
             debugLog("hook process=$processName")
             RearWidgetRuntimeStore.install(packageName)
+            RearNotificationCards.post = { key, views -> postNotificationMirror(key, views) }
+            RearNotificationCards.remove = { key -> removeNotificationMirror(key) }
+            RearNotificationCards.reconcile = { keys -> reconcileNotificationMirrors(keys) }
             debugLog("onHook start")
 
             val versionCode = resolveHookPackageVersionCode(
@@ -482,6 +491,7 @@ class RearWidgetHook : RoxyHooker() {
                     applyRuntimeMaps(force = true)
                     patchManagerAppGates(manager)
                     scheduleInjectAllActiveNotices()
+                    RearNotificationCards.onReady?.invoke()
                     debugLog("captured manager=${manager != null}, handler=${mainHandler != null}")
                 }
             }
@@ -2117,6 +2127,80 @@ class RearWidgetHook : RoxyHooker() {
         }
     }
 
+    private fun PackageScope.postNotificationMirror(sourceKey: String, views: RemoteViews): Boolean {
+        val ctx = hostContext ?: return false
+        if (!presetDataReleased || manager == null || mainHandler == null) return false
+        return runCatching {
+            val business = RearNotificationCards.BUSINESS
+            // RemoteViews is the rendering path. Supply a valid fallback template for registry
+            // bookkeeping, without borrowing or overwriting any native business/template.
+            val fallback = File(ctx.filesDir, "reareye/notification-mirror-v1.zip")
+            if (!fallback.isFile) {
+                fallback.parentFile?.mkdirs()
+                ZipOutputStream(fallback.outputStream()).use { zip ->
+                    zip.putNextEntry(ZipEntry("manifest.xml"))
+                    zip.write("""<Screen version="2" screenWidth="1080" frameRate="0"><Text x="540" y="100" align="center" color="#FFFFFFFF" size="40" text="通知卡片加载中"/></Screen>""".toByteArray())
+                    zip.closeEntry()
+                }
+            }
+            RearWidgetRuntimeStore.registerBusiness(
+                packageName = NotificationRouteBridgeContract.MODULE_PACKAGE,
+                business = business,
+                filePath = fallback.absolutePath,
+                defaultPriority = 300,
+            )
+            val payload = Bundle().apply {
+                putString("__rear_card_id__", RearNotificationCards.CARD_PREFIX + sourceKey)
+                putString("__notification_source_key__", sourceKey)
+                putParcelable("miui.rear.rv", views)
+                putParcelable("miui.rear.rvAOD", views)
+            }
+            val ticket = RearWidgetRuntimeStore.postNotice(
+                business = business,
+                payload = payload,
+                packageName = NotificationRouteBridgeContract.MODULE_PACKAGE,
+                options = RearWidgetNoticeOptions(disablePopup = true, showTimeTip = false, priority = 300),
+            )
+            applyRuntimeMaps(force = false)
+            patchManagerAppGates(manager)
+            applyNoticeDisplayByCompositeKey(ticket.compositeKey)
+            true
+        }.onFailure { YLog.warn("Notification mirror injection failed: ${it.javaClass.simpleName}") }
+            .getOrDefault(false)
+    }
+
+    private fun PackageScope.removeNotificationMirror(sourceKey: String) {
+        RearWidgetRuntimeStore.disableCardDisplay(
+            packageName = NotificationRouteBridgeContract.MODULE_PACKAGE,
+            business = RearNotificationCards.BUSINESS,
+            cardId = RearNotificationCards.CARD_PREFIX + sourceKey,
+        )?.let { ejectByTicket(it) }
+    }
+
+    private fun PackageScope.reconcileNotificationMirrors(activeKeys: Set<String>) {
+        if (!presetDataReleased) return
+        RearWidgetRuntimeStore.listNotices().filter {
+            it.ticket.business == RearNotificationCards.BUSINESS &&
+                    it.payload.getString("__notification_source_key__") !in activeKeys
+        }.forEach { ejectByCompositeKey(it.ticket.compositeKey) }
+        // The host may restore cards before our in-memory ticket index is ready. Remove
+        // only our own stale restored records, including after a host process restart.
+        val mgr = manager ?: return
+        val field = resolveSmartAssistantManagerWidgetListFieldName()
+        val list = mgr.asResolver().firstField { name = field }.get<Any?>() as? List<*> ?: return
+        val stale = synchronized(list) {
+            list.mapNotNull { record ->
+                val bundle = record?.let { managerWidgetBundle(it) } ?: return@mapNotNull null
+                if (bundle.getString("business") != RearNotificationCards.BUSINESS) return@mapNotNull null
+                if (bundle.getString("__notification_source_key__") in activeKeys) return@mapNotNull null
+                bundle.getString("composite_key")
+            }
+        }
+        stale.forEach {
+            ejectNativeCompositeKey(it, NotificationRouteBridgeContract.MODULE_PACKAGE, 1)
+        }
+    }
+
     private fun PackageScope.handleNotificationRouteRemoved(payload: Bundle) {
         val snapshot = NotificationRouteSnapshot.fromBundle(payload) ?: return
         val removeReason = payload.getInt(NotificationRouteBridgeContract.Keys.REMOVE_REASON, 1)
@@ -2429,6 +2513,7 @@ class RearWidgetHook : RoxyHooker() {
                 applyRuntimeMaps(force = true)
                 patchManagerAppGates(manager)
                 injectAllActiveNotices()
+                RearNotificationCards.onReady?.invoke()
                 debugLog("restored custom widget templates after host smart_assistant release")
             }.onFailure {
                 debugLog("post-release bootstrap failed err=${it.message}")

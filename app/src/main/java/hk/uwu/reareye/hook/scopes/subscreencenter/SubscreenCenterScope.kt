@@ -18,6 +18,8 @@ import hk.uwu.reareye.hook.scopes.subscreencenter.modules.maml.data.MamlVariable
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.rearwidget.ExtraTimeTipHook
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.rearwidget.RearAppHook
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.rearwidget.RearWidgetHook
+import hk.uwu.reareye.hook.scopes.subscreencenter.modules.rearwidget.RearNotificationSyncHook
+import hk.uwu.reareye.hook.scopes.subscreencenter.modules.charging.RearChargingHook
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.rearwidget.SystemUiNotificationBridgeHook
 import hk.uwu.reareye.hook.support.YLog
 import hk.uwu.roxyhook.PackageScope
@@ -42,6 +44,8 @@ class SubscreenCenterScope : RoxyHooker(), Scope {
             VideoProgressResumeModule(),
             RearWallpaperHook(),
             RearWidgetHook(),
+            RearNotificationSyncHook(),
+            RearChargingHook(),
             RearAppHook(),
             SystemUiNotificationBridgeHook(),
             SystemUiActivityHostHook(),

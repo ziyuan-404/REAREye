@@ -53,6 +53,10 @@ object ConfigKeys {
     const val REAR_WIDGET_CARD_ORDER_DATA = "rear_widget_card_order_data"
     const val REAR_WIDGET_BUSINESS_EXTRA_CONFIG_DATA = "rear_widget_business_extra_config_data"
     const val HOOK_ALLOW_REAR_FOCUS_NOTICES = "enable_allow_rear_focus_notices"
+    const val REAR_NOTIFICATION_SYNC = "rear_notification_sync"
+    const val REAR_NOTIFICATION_SYNC_APPS = "rear_notification_sync_apps"
+    const val REAR_LIQUID_CHARGING = "rear_liquid_charging"
+    const val REAR_LIQUID_CHARGING_PERSISTENT = "rear_liquid_charging_persistent"
 
     const val HOOK_BACKGROUND_WHITELIST = "enable_background_whitelist_hook"
     const val BACKGROUND_WHITELIST_APPS = "background_whitelist_apps"
@@ -450,6 +454,30 @@ val REAREyeConfig = listOf(
                         key = ConfigKeys.HOOK_ALLOW_REAR_FOCUS_NOTICES,
                         titleRes = R.string.allow_rear_focus_notices,
                         descriptionRes = R.string.allow_rear_focus_notices_desc,
+                        type = ConfigType.BooleanVal(defaultValue = false),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_NOTIFICATION_SYNC,
+                        titleRes = R.string.rear_notification_sync,
+                        descriptionRes = R.string.rear_notification_sync_desc,
+                        type = ConfigType.BooleanVal(defaultValue = false),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_NOTIFICATION_SYNC_APPS,
+                        titleRes = R.string.rear_notification_sync_apps,
+                        descriptionRes = R.string.rear_notification_sync_apps_desc,
+                        type = ConfigType.AppList(defaultValues = emptySet()),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_LIQUID_CHARGING,
+                        titleRes = R.string.rear_liquid_charging,
+                        descriptionRes = R.string.rear_liquid_charging_desc,
+                        type = ConfigType.BooleanVal(defaultValue = false),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_LIQUID_CHARGING_PERSISTENT,
+                        titleRes = R.string.rear_liquid_charging_persistent,
+                        descriptionRes = R.string.rear_liquid_charging_persistent_desc,
                         type = ConfigType.BooleanVal(defaultValue = false),
                     ),
                 ),

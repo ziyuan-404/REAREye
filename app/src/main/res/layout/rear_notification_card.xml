@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rear_notification_card"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="12dp" android:background="#FF101414">
+    <TextView android:id="@+id/rear_notification_token" android:layout_width="0dp"
+        android:layout_height="0dp" android:visibility="gone" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="24dp" android:gravity="center_vertical">
+        <ImageView android:id="@+id/rear_notification_icon" android:layout_width="20dp"
+            android:layout_height="20dp" android:importantForAccessibility="no" />
+        <TextView android:id="@+id/rear_notification_app" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp"
+            android:textColor="#FFB7C9C0" android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
+        <TextView android:id="@+id/rear_notification_clear" android:layout_width="40dp"
+            android:layout_height="match_parent" android:gravity="center" android:text="清除"
+            android:textColor="#FFB7C9C0" android:textSize="12sp" android:contentDescription="清除此通知，并同步清除主屏通知" />
+    </LinearLayout>
+    <TextView android:id="@+id/rear_notification_title" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:layout_marginTop="6dp" android:maxLines="2"
+        android:ellipsize="end" android:textColor="#FFFFFFFF" android:textSize="18sp" android:textStyle="bold" />
+    <TextView android:id="@+id/rear_notification_text" android:layout_width="match_parent"
+        android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="4dp"
+        android:maxLines="4" android:ellipsize="end" android:textColor="#FFD8E4DC" android:textSize="14sp" />
+    <ProgressBar android:id="@+id/rear_notification_progress" style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent" android:layout_height="6dp" android:visibility="gone" />
+    <Chronometer android:id="@+id/rear_notification_chronometer" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:textColor="#FF8DE6AD" android:textSize="18sp" android:visibility="gone" />
+    <LinearLayout android:id="@+id/rear_notification_actions" android:layout_width="match_parent"
+        android:layout_height="32dp" android:layout_marginTop="4dp" android:visibility="gone">
+        <TextView android:id="@+id/rear_notification_action_one" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1" android:gravity="center"
+            android:textSize="13sp" android:textColor="#FF8DE6AD" />
+        <TextView android:id="@+id/rear_notification_action_two" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1" android:gravity="center"
+            android:textSize="13sp" android:textColor="#FF8DE6AD" />
+    </LinearLayout>
+    <TextView android:id="@+id/rear_notification_hint" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textColor="#FF86978D" android:textSize="10sp" />
+</LinearLayout>
