@@ -3,6 +3,7 @@ package hk.uwu.reareye.ui.components.config
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.MusicNote
@@ -41,6 +42,7 @@ internal val MoreConfigGroups = listOf(
         descriptionRes = R.string.config_more_apps_runtime_desc,
         icon = Icons.Rounded.Apps,
         itemKeys = listOf(
+            ConfigKeys.REAR_SCREEN_TIMEOUT_SECONDS,
             ConfigKeys.HOOK_ACTIVITIES_WHITELIST,
             ConfigKeys.ACTIVITIES_WHITELIST_APPS,
             ConfigKeys.ALLOW_ALL_ACTIVITIES,
@@ -65,7 +67,16 @@ internal val MoreConfigGroups = listOf(
         itemKeys = listOf(
             ConfigKeys.CFG_REAR_WIDGET_SCENE_ROUTE_MANAGER,
             ConfigKeys.HOOK_ALLOW_REAR_FOCUS_NOTICES,
+            ConfigKeys.REAR_NOTIFICATION_SYNC,
+            ConfigKeys.REAR_NOTIFICATION_SYNC_APPS,
         ),
+    ),
+    MoreConfigGroup(
+        id = "charging",
+        titleRes = R.string.rear_charging_category,
+        descriptionRes = R.string.rear_charging_category_desc,
+        icon = Icons.Rounded.BatteryChargingFull,
+        itemKeys = listOf(ConfigKeys.REAR_LIQUID_CHARGING, ConfigKeys.REAR_LIQUID_CHARGING_PERSISTENT),
     ),
     MoreConfigGroup(
         id = "music_lyrics",

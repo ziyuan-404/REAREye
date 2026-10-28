@@ -1,13 +1,11 @@
 package hk.uwu.reareye.hook.scopes.subscreencenter.modules.charging
 
-import android.app.Presentation
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.display.DisplayManager
-import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
 import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
@@ -17,36 +15,51 @@ import android.view.Display
 import android.view.InputEvent
 import android.view.InputDevice
 import android.view.KeyEvent
-import android.view.WindowManager
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import java.lang.reflect.Modifier
+import com.highcapable.kavaref.KavaRef.Companion.resolve
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import hk.uwu.reareye.hook.support.YLog
 import hk.uwu.reareye.hook.support.hookAppContext
 import hk.uwu.reareye.hook.support.hookPrefs
+import hk.uwu.reareye.hook.support.hookAppInfo
+import hk.uwu.reareye.hook.support.hookSystemContext
+import hk.uwu.reareye.hook.utils.createDexKitCacheBridge
+import hk.uwu.reareye.hook.utils.resolveHookPackageVersionCode
+import hk.uwu.reareye.hook.utils.resolveDexKitMethodInjectionPoint
+import org.luckypray.dexkit.annotations.DexKitExperimentalApi
 import hk.uwu.reareye.ui.config.ConfigKeys
 import hk.uwu.roxyhook.PackageScope
 import hk.uwu.roxyhook.RoxyHooker
 import hk.uwu.roxyhook.android.lifecycle.lifecycle
 
+@OptIn(DexKitExperimentalApi::class)
 class RearChargingHook : RoxyHooker() {
     companion object {
-        internal var interruptForNotification: (() -> Unit)? = null
+        internal var notificationAvailable: (() -> Unit)? = null
     }
     private val main = Handler(Looper.getMainLooper())
     private var context: Context? = null
     private var displays: DisplayManager? = null
     private var receiver: BroadcastReceiver? = null
-    private var presentation: Presentation? = null
+    private var launcher: Activity? = null
+    private var overlayHost: ViewGroup? = null
+    private var findLauncher: () -> Activity? = { null }
     private var liquid: RearChargingLiquidView? = null
-    private var plugged = false
+    @Volatile private var plugged = false
     private var level = -1
     private var status = BatteryManager.BATTERY_STATUS_UNKNOWN
-    private var deadline = 0L
-    private var suppressed = false
-    private var nextWindowAttempt = 0L
+    @Volatile private var deadline = 0L
+    @Volatile private var suppressed = false
     private var enabled: () -> Boolean = { false }
     private var keepVisible: () -> Boolean = { false }
-    private val timeout = Runnable { if (!keepVisible()) dismiss() }
+    @Volatile private var nativeNotificationManager: Any? = null
+    private var reloadNativeNotifications: ((Any) -> Unit)? = null
+    private val deferredNotificationRefreshes = LinkedHashMap<Any, () -> Unit>()
+    private val timeout = Runnable { finishEntryPriority() }
+    private val awaitHost = Runnable { refresh() }
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = refresh()
         override fun onDisplayRemoved(displayId: Int) { dismiss(); refresh() }
@@ -57,6 +70,21 @@ class RearChargingHook : RoxyHooker() {
         loadApp("com.xiaomi.subscreencenter") {
             enabled = { hookPrefs.getBoolean(ConfigKeys.REAR_LIQUID_CHARGING, false) }
             keepVisible = { hookPrefs.getBoolean(ConfigKeys.REAR_LIQUID_CHARGING_PERSISTENT, false) }
+            val launcherClass = "com.xiaomi.subscreencenter.SubScreenLauncher".toClass()
+            val appClass = "com.xiaomi.subscreencenter.SubScreenCenterApp".toClass()
+            val getter = appClass.declaredMethods.singleOrNull {
+                Modifier.isStatic(it.modifiers) && it.parameterCount == 0 && it.returnType == launcherClass
+            }?.apply { isAccessible = true }
+            findLauncher = { runCatching { getter?.invoke(null) as? Activity }.getOrNull() }
+            listOf("onCreate" to 1, "onResume" to 0).forEach { (method, count) ->
+                launcherClass.resolve().firstMethod { name = method; parameterCount = count }.hook {
+                    after { (instance as? Activity)?.let { host -> main.post { adoptLauncher(host); refresh() } } }
+                }
+            }
+            launcherClass.resolve().firstMethod { name = "onDestroy"; parameterCount = 0 }.hook {
+                before { if (instance === launcher) { dismiss(); launcher = null } }
+            }
+            installNotificationPriority()
             lifecycle {
                 onAttach(replay = true) {
                     val ctx = hookAppContext ?: this.context
@@ -70,7 +98,11 @@ class RearChargingHook : RoxyHooker() {
         if (context != null) return
         context = ctx
         YLog.info("[REAREye-Charging] attached enabled=${enabled()} persistent=${keepVisible()}")
-        interruptForNotification = { suppressed = true; deadline = 0L; dismiss() }
+        notificationAvailable = {
+            // The finite entry has priority over notifications. A persistent idle
+            // charge view yields after that entry, like any lower-priority content.
+            if (!ownsEntryPriority() && keepVisible()) { suppressed = true; dismiss() }
+        }
         displays = ctx.getSystemService(DisplayManager::class.java)
         displays?.registerDisplayListener(displayListener, main)
         receiver = object : BroadcastReceiver() {
@@ -86,16 +118,17 @@ class RearChargingHook : RoxyHooker() {
                     Intent.ACTION_POWER_CONNECTED -> {
                         plugged = true
                         suppressed = false
-                        nextWindowAttempt = 0L
                         YLog.info("[REAREye-Charging] power connected enabled=${enabled()}")
                         if (enabled()) {
                             deadline = SystemClock.uptimeMillis() + 8_000L
+                            nativeNotificationManager?.let(::deferNativeNotification)
+                            YLog.info("[REAREye-Charging] priority acquired durationMs=8000")
                             rearDisplay()?.let(::wakeRearDisplay)
                             main.removeCallbacks(timeout)
                             main.postDelayed(timeout, 8_000L)
                         }
                     }
-                    Intent.ACTION_POWER_DISCONNECTED -> { plugged = false; deadline = 0L }
+                    Intent.ACTION_POWER_DISCONNECTED -> { plugged = false; finishEntryPriority() }
                 }
                 refresh()
             }
@@ -115,46 +148,114 @@ class RearChargingHook : RoxyHooker() {
     }
 
     private fun refresh() {
-        val ctx = context ?: return
+        if (context == null) return
         val display = rearDisplay()
         val requested = keepVisible() || SystemClock.uptimeMillis() < deadline
         if (!enabled() || suppressed || !plugged || level < 0 || !requested || display?.state != Display.STATE_ON) {
             dismiss()
             return
         }
-        if (presentation?.display?.displayId != display.displayId) dismiss()
+        val host = launcher?.takeUnless { it.isFinishing || it.isDestroyed } ?: findLauncher()?.also(::adoptLauncher)
+        val root = host?.takeIf { it.display?.displayId == display.displayId }?.window?.decorView as? ViewGroup
+        if (root == null || !root.isAttachedToWindow) {
+            dismiss()
+            main.removeCallbacks(awaitHost)
+            if (requested) main.postDelayed(awaitHost, 150L)
+            return
+        }
+        if (overlayHost !== root) dismiss()
         val label = when (status) {
             BatteryManager.BATTERY_STATUS_FULL -> "已充满"
             BatteryManager.BATTERY_STATUS_CHARGING -> "正在充电"
             else -> "已连接电源 · 暂停充电"
         }
-        if (presentation == null) {
-            if (SystemClock.uptimeMillis() < nextWindowAttempt) return
+        if (liquid == null) {
             runCatching {
-                val dialog = Presentation(ctx, display)
-                val view = RearChargingLiquidView(dialog.context)
-                dialog.setContentView(view)
-                dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
-                dialog.window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
-                dialog.window?.setDecorFitsSystemWindows(false)
-                dialog.window?.let { window ->
-                    window.attributes = window.attributes.apply {
-                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                    }
-                }
-                view.setOnClickListener { suppressed = true; deadline = 0L; dismiss() }
-                presentation = dialog
+                // Use the existing rear launcher window. Android 17 can reject a new
+                // Presentation window on this internal secondary display after wake.
+                val view = RearChargingLiquidView(root.context)
+                view.elevation = 32_000f
+                view.keepScreenOn = ownsEntryPriority()
+                view.setOnClickListener { suppressed = true; finishEntryPriority() }
+                root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                overlayHost = root
                 liquid = view
-                dialog.show()
-                dialog.window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
                 view.updateBattery(level, label, animateEntry = true)
-                YLog.info("[REAREye-Charging] shown level=$level")
+                YLog.info("[REAREye-Charging] shown level=$level hostDisplay=${host.display?.displayId}")
             }.onFailure {
                 dismiss()
-                nextWindowAttempt = SystemClock.uptimeMillis() + 1_000L
-                YLog.warn("Rear liquid charging window unavailable: ${it.javaClass.simpleName}: ${it.message?.take(160)}")
+                YLog.warn("Rear liquid charging host unavailable: ${it.javaClass.simpleName}")
             }
-        } else liquid?.updateBattery(level, label)
+        } else {
+            liquid?.keepScreenOn = ownsEntryPriority()
+            liquid?.updateBattery(level, label)
+        }
+    }
+
+    private fun ownsEntryPriority(): Boolean = enabled() && plugged && !suppressed &&
+        SystemClock.uptimeMillis() < deadline
+
+    private fun deferNativeNotification(manager: Any): Boolean {
+        val reload = reloadNativeNotifications ?: return false
+        return synchronized(deferredNotificationRefreshes) {
+            if (!ownsEntryPriority()) return@synchronized false
+            deferredNotificationRefreshes[manager] = { reload(manager) }
+            true
+        }
+    }
+
+    private fun finishEntryPriority() {
+        main.removeCallbacks(timeout)
+        val pending = synchronized(deferredNotificationRefreshes) {
+            deadline = 0L
+            deferredNotificationRefreshes.values.toList().also { deferredNotificationRefreshes.clear() }
+        }
+        if (!keepVisible() || suppressed || pending.isNotEmpty()) {
+            if (pending.isNotEmpty()) suppressed = true
+            dismiss()
+        } else liquid?.keepScreenOn = false
+        YLog.info("[REAREye-Charging] priority released notificationRefreshes=${pending.size}")
+        pending.forEach { reload -> main.post {
+            runCatching(reload).onFailure { YLog.warn("Deferred rear notification refresh unavailable: ${it.javaClass.simpleName}") }
+        } }
+    }
+
+    private fun PackageScope.installNotificationPriority() {
+        runCatching {
+            val bridge = runtime.manage(createDexKitCacheBridge(
+                packageName = hookAppInfo.packageName,
+                packageVersionCode = resolveHookPackageVersionCode(hookSystemContext, hookAppInfo.packageName, hookAppInfo.sourceDir),
+                sourceDir = hookAppInfo.sourceDir,
+                dataDir = hookAppInfo.dataDir,
+            ))
+            val show = requireNotNull(resolveDexKitMethodInjectionPoint(bridge, "SSC_CHARGE_PRIORITY_NOTIFICATION_SHOW") {
+                findMethod { matcher { paramCount(1); returnType = "void"; usingStrings("post notification: ") } }.singleOrNull()
+            })
+            val reload = requireNotNull(resolveDexKitMethodInjectionPoint(bridge, "SSC_CHARGE_PRIORITY_NOTIFICATION_RELOAD") {
+                findMethod { matcher { declaredClass = show.className; paramCount(0); returnType = "void";
+                    usingStrings("load keyguard notifications cursor is null") } }.singleOrNull()
+            })
+            val reloadMethod = reload.className.toClass().getDeclaredMethod(reload.methodName).apply { isAccessible = true }
+            reloadNativeNotifications = { manager -> reloadMethod.invoke(manager) }
+            show.className.toClass().resolve().firstMethod { name = show.methodName; parameterCount = 1 }.hook {
+                before {
+                    val manager = instance ?: return@before
+                    nativeNotificationManager = manager
+                    if (deferNativeNotification(manager)) {
+                        result = null
+                    } else if (keepVisible() && liquid != null) {
+                        main.post { suppressed = true; dismiss() }
+                    }
+                }
+            }
+            YLog.info("[REAREye-Charging] notification priority installed")
+        }.onFailure { YLog.warn("Rear notification priority unavailable: ${it.javaClass.simpleName}") }
+    }
+
+    private fun adoptLauncher(host: Activity) {
+        if (host.display?.displayId == Display.DEFAULT_DISPLAY) return
+        if (launcher !== host) dismiss()
+        launcher = host
     }
 
     private fun wakeRearDisplay(display: Display) {
@@ -186,9 +287,15 @@ class RearChargingHook : RoxyHooker() {
     }
 
     private fun dismiss() {
+        main.removeCallbacks(awaitHost)
+        val view = liquid
+        val root = overlayHost
         liquid = null
-        runCatching { presentation?.dismiss() }
-        presentation = null
+        overlayHost = null
+        if (view != null) {
+            runCatching { root?.removeView(view) }
+            YLog.info("[REAREye-Charging] dismissed")
+        }
     }
 
     override fun onHotReloadQuiesce() {
@@ -202,7 +309,13 @@ class RearChargingHook : RoxyHooker() {
                 receiver = null
                 displays = null
                 context = null
-                interruptForNotification = null
+                launcher = null
+                deadline = 0L
+                synchronized(deferredNotificationRefreshes) { deferredNotificationRefreshes.clear() }
+                nativeNotificationManager = null
+                reloadNativeNotifications = null
+                findLauncher = { null }
+                notificationAvailable = null
                 enabled = { false }
                 keepVisible = { false }
             } finally { done.countDown() }

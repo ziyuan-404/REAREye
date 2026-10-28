@@ -1,11 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="rear_screen_timeout">背屏亮屏时长</string>
+    <string name="rear_screen_timeout_desc">背屏桌面与下拉面板在最后一次操作后继续亮屏所选时长，之后恢复系统息屏。手动息屏仍生效。修改后重启背屏中心。</string>
+    <string name="rear_timeout_system">跟随系统</string>
+    <string name="rear_timeout_15">15 秒</string>
+    <string name="rear_timeout_30">30 秒</string>
+    <string name="rear_timeout_60">1 分钟</string>
+    <string name="rear_timeout_120">2 分钟</string>
+    <string name="rear_timeout_300">5 分钟</string>
     <string name="rear_notification_sync">背屏通知常驻与双向同步</string>
     <string name="rear_notification_sync_desc">沿用原厂通知样式，将消息和未适配的焦点通知保留在下拉“动态通知与便利贴”。主屏移除后同步消失，背屏左右划掉会同步清除主屏通知；持续通知保留原系统限制。重启背屏中心后生效。</string>
     <string name="rear_notification_sync_apps">同步通知的应用</string>
-    <string name="rear_notification_sync_apps_desc">未选择时同步所有应用。原生通话、闹钟、倒计时和音乐卡片继续由系统处理。</string>
+    <string name="rear_notification_scope_none">当前范围：未选择应用，不同步通知</string>
+    <string name="rear_notification_scope_selected">当前范围：仅所选 %1$d 个应用</string>
+    <string name="rear_notification_selection_hint">仅勾选的应用会同步到背屏，全部不勾选则不同步。右上角菜单可全选或清空；修改后点击右下角保存。</string>
+    <string name="rear_notification_select_all_apps">全选已安装应用</string>
+    <string name="rear_charging_category">充电显示</string>
+    <string name="rear_charging_category_desc">优先显示充电动画，再恢复通知展示。</string>
+    <string name="rear_notification_sync_apps_desc">白名单：仅勾选的应用会同步到背屏，未选择则不同步。原生通话、闹钟、倒计时和音乐卡片继续由系统处理。</string>
     <string name="rear_liquid_charging">绿色液体充电动画</string>
-    <string name="rear_liquid_charging_desc">基于 MiRearScreenSwitcher 的液体效果，从下向上升至真实电量；插电时显示 8 秒，点击关闭，不会持续唤醒背屏。重启背屏中心后生效。</string>
+    <string name="rear_liquid_charging_desc">基于 MiRearScreenSwitcher 的液体效果，从下向上升至真实电量；插电后优先显示 8 秒，期间通知照常同步，结束后恢复通知展示。点击可提前退出。重启背屏中心后生效。</string>
     <string name="rear_liquid_charging_persistent">亮屏充电时持续显示液体</string>
     <string name="rear_liquid_charging_persistent_desc">背屏已亮且接通电源时持续显示，息屏停止动画。不会保持背屏常亮。</string>
 </resources>

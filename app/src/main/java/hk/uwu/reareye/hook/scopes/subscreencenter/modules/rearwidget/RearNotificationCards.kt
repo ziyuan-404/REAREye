@@ -11,4 +11,6 @@ internal object RearNotificationCards {
     var reconcile: ((Set<String>) -> Unit)? = null
     var onReady: (() -> Unit)? = null
     var hasNativeCard: ((String) -> Boolean)? = null
+    var hasMirrorCard: ((String) -> Boolean)? = null
+    var setVisibleSourceKeys: ((Set<String>) -> Unit)? = null
 }

@@ -293,7 +293,9 @@ private class SharedPreferencesHookPrefsEditor(
     }
 
     override fun putStringSet(key: String, value: Set<String>?): HookPrefsEditor {
-        delegate.putStringSet(key, value)
+        // RemotePreferences crosses into the framework daemon. Kotlin's EmptySet
+        // is not available in that process; always send a platform collection.
+        delegate.putStringSet(key, value?.let { java.util.HashSet(it) })
         return this
     }
 

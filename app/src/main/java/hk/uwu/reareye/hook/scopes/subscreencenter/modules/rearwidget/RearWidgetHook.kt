@@ -300,6 +300,7 @@ class RearWidgetHook : RoxyHooker() {
         RearNotificationCards.remove = null
         RearNotificationCards.reconcile = null
         RearNotificationCards.hasNativeCard = null
+        RearNotificationCards.hasMirrorCard = null
         managerEpoch.incrementAndGet()
         invalidateApiConnections()
         var success = unregisterHookBootstrapReceiver()
@@ -347,6 +348,18 @@ class RearWidgetHook : RoxyHooker() {
                                 field.get(record) == sourceKey
                             }
                     }
+                }.getOrDefault(false)
+            }
+            RearNotificationCards.hasMirrorCard = { sourceKey ->
+                runCatching {
+                    manager?.asResolver()?.firstField {
+                        name = resolveSmartAssistantManagerWidgetListFieldName()
+                    }?.get<List<Any>>()?.any { record ->
+                        val bundle = managerWidgetBundle(record)
+                        bundle?.getString("business") == RearNotificationCards.BUSINESS &&
+                            bundle.getString("__notification_source_key__") == sourceKey &&
+                            bundle.getBoolean("is_remote_view", false)
+                    } == true
                 }.getOrDefault(false)
             }
             debugLog("onHook start")
@@ -1990,6 +2003,13 @@ class RearWidgetHook : RoxyHooker() {
                             handleNotificationRouteRemoved(payloadCopy)
                         }
 
+                        NotificationRouteBridgeContract.Subchannel.VISIBLE_NOTIFICATION_KEYS -> {
+                            val keys = payloadCopy.getStringArrayList(NotificationRouteBridgeContract.Keys.VISIBLE_KEYS)
+                                ?: return false
+                            if (keys.size > 4096 || keys.any { it.length > 2048 } || keys.sumOf { it.length } > 128_000) return false
+                            RearNotificationCards.setVisibleSourceKeys?.invoke(keys.toSet())
+                        }
+
                         else -> return false
                     }
                     true
@@ -2604,6 +2624,18 @@ class RearWidgetHook : RoxyHooker() {
             debugLog("build decorated extras failed key=${notice.ticket.compositeKey} err=${it.message}")
         }.getOrNull() ?: return false
 
+        if (notice.ticket.business == RearNotificationCards.BUSINESS) {
+            val records = manager?.asResolver()?.firstField {
+                name = resolveSmartAssistantManagerWidgetListFieldName()
+            }?.get<List<Any>>().orEmpty()
+            val previous = records.firstNotNullOfOrNull { record ->
+                managerWidgetBundle(record)?.takeIf { it.getString("composite_key") == notice.ticket.compositeKey }
+            }
+            if (previous != null && !previous.getBoolean("is_remote_view", false)) {
+                liveNotificationWidgets.remove(notice.ticket.compositeKey)
+                return false // Re-enter the native factory to repair an old fallback card.
+            }
+        }
         val recordUpdated = updateManagerWidgetRecord(notice, extras)
         if (!recordUpdated && notice.ticket.business == RearNotificationCards.BUSINESS) {
             // A detached RemoteViews instance can outlive the manager record after

@@ -57,6 +57,7 @@ object ConfigKeys {
     const val REAR_NOTIFICATION_SYNC_APPS = "rear_notification_sync_apps"
     const val REAR_LIQUID_CHARGING = "rear_liquid_charging"
     const val REAR_LIQUID_CHARGING_PERSISTENT = "rear_liquid_charging_persistent"
+    const val REAR_SCREEN_TIMEOUT_SECONDS = "rear_screen_timeout_seconds"
 
     const val HOOK_BACKGROUND_WHITELIST = "enable_background_whitelist_hook"
     const val BACKGROUND_WHITELIST_APPS = "background_whitelist_apps"
@@ -461,6 +462,22 @@ val REAREyeConfig = listOf(
                         titleRes = R.string.rear_notification_sync,
                         descriptionRes = R.string.rear_notification_sync_desc,
                         type = ConfigType.BooleanVal(defaultValue = false),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_SCREEN_TIMEOUT_SECONDS,
+                        titleRes = R.string.rear_screen_timeout,
+                        descriptionRes = R.string.rear_screen_timeout_desc,
+                        type = ConfigType.EnumSingleSelect(
+                            defaultValue = 0,
+                            options = listOf(
+                                ConfigType.EnumOption(R.string.rear_timeout_system, 0),
+                                ConfigType.EnumOption(R.string.rear_timeout_15, 15),
+                                ConfigType.EnumOption(R.string.rear_timeout_30, 30),
+                                ConfigType.EnumOption(R.string.rear_timeout_60, 60),
+                                ConfigType.EnumOption(R.string.rear_timeout_120, 120),
+                                ConfigType.EnumOption(R.string.rear_timeout_300, 300),
+                            ),
+                        ),
                     ),
                     ConfigItem(
                         key = ConfigKeys.REAR_NOTIFICATION_SYNC_APPS,

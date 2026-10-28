@@ -47,6 +47,7 @@ internal object NotificationRouteBridgeContract {
     object Subchannel {
         const val NOTIFICATION_POSTED = "notification_posted"
         const val NOTIFICATION_REMOVED = "notification_removed"
+        const val VISIBLE_NOTIFICATION_KEYS = "visible_notification_keys"
         const val ACTIVITY_CARD_DEFINITION_DELETED = "activity_card_definition_deleted"
     }
 
@@ -65,6 +66,7 @@ internal object NotificationRouteBridgeContract {
         const val SUB_TEXT = "subText"
         const val SHORT_CRITICAL_TEXT = "shortCriticalText"
         const val REMOVE_REASON = "removeReason"
+        const val VISIBLE_KEYS = "visibleKeys"
     }
 }
 

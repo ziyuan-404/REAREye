@@ -362,6 +362,11 @@ object RearWidgetRuntimeStore {
             putBoolean("enableFloat", options.enableFloat)
             putBoolean("show_time_tip", options.showTimeTip)
             putBoolean("__x_sticky__", options.sticky)
+            // Direct record updates bypass the host parser that normally derives
+            // this flag. Keep the native factory on its RemoteViews branch when
+            // the pager rebuilds cards, instead of opening the MAML fallback.
+            if (containsKey("miui.rear.rv") || containsKey("miui.rear.rvAOD"))
+                putBoolean("is_remote_view", true)
 
             if (getString("miui.rear.param").isNullOrBlank()) {
                 putString("miui.rear.param", buildRearParamJson(ticket.business, options))

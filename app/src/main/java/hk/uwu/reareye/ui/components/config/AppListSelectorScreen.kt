@@ -66,6 +66,7 @@ import hk.uwu.reareye.R
 import hk.uwu.reareye.ui.components.RearSearchBar
 import hk.uwu.reareye.ui.components.rememberApplicationIconBitmap
 import hk.uwu.reareye.ui.config.ConfigItem
+import hk.uwu.reareye.ui.config.ConfigKeys
 import hk.uwu.reareye.ui.config.PrefsManager
 import hk.uwu.reareye.ui.config.rememberRemotePrefsStatusRevision
 import hk.uwu.reareye.ui.theme.rearAcrylicEffect
@@ -810,6 +811,26 @@ fun AppListSelectorScreen(
                                 renderInRootScaffold = true,
                                 content = {
                                     ListPopupColumn {
+                                        if (configItem.key == ConfigKeys.REAR_NOTIFICATION_SYNC_APPS) {
+                                            DropdownImpl(
+                                                item = DropdownItem(title = stringResource(R.string.rear_notification_select_all_apps)),
+                                                optionSize = 2,
+                                                isSelected = false,
+                                                index = 0,
+                                                dropdownColors = DropdownDefaults.dropdownColors(),
+                                                onSelectedIndexChange = {
+                                                    dismissThenApply(
+                                                        { showMoreMenu.value = false },
+                                                        {
+                                                            appCatalog?.let { catalog ->
+                                                                selectedOrder.clear()
+                                                                selectedOrder.addAll(catalog.byLabel.map { it.packageName })
+                                                            }
+                                                        },
+                                                    )
+                                                },
+                                            )
+                                        }
                                         DropdownImpl(
                                             item = DropdownItem(
                                                 icon = { modifier ->
@@ -822,9 +843,9 @@ fun AppListSelectorScreen(
                                                 },
                                                 title = stringResource(R.string.selection_clear),
                                             ),
-                                            optionSize = 1,
+                                            optionSize = if (configItem.key == ConfigKeys.REAR_NOTIFICATION_SYNC_APPS) 2 else 1,
                                             isSelected = false,
-                                            index = 0,
+                                            index = if (configItem.key == ConfigKeys.REAR_NOTIFICATION_SYNC_APPS) 1 else 0,
                                             dropdownColors = DropdownDefaults.dropdownColors(),
                                             onSelectedIndexChange = {
                                                 dismissThenApply(
@@ -849,6 +870,24 @@ fun AppListSelectorScreen(
                     onSearchQueryChange = { searchInput = it },
                     onSearchFocusChange = { searchFocused.value = it },
                 )
+                if (configItem.key == ConfigKeys.REAR_NOTIFICATION_SYNC_APPS && selectedOrderLoaded) {
+                    Column(
+                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = if (selectedOrder.isEmpty())
+                                stringResource(R.string.rear_notification_scope_none)
+                            else stringResource(R.string.rear_notification_scope_selected, selectedOrder.size),
+                            style = MiuixTheme.textStyles.body1,
+                        )
+                        Text(
+                            text = stringResource(R.string.rear_notification_selection_hint),
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                }
             }
         },
         floatingActionButton = {
