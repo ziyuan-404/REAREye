@@ -299,6 +299,7 @@ class RearWidgetHook : RoxyHooker() {
         RearNotificationCards.post = null
         RearNotificationCards.remove = null
         RearNotificationCards.reconcile = null
+        RearNotificationCards.hasNativeCard = null
         managerEpoch.incrementAndGet()
         invalidateApiConnections()
         var success = unregisterHookBootstrapReceiver()
@@ -334,6 +335,20 @@ class RearWidgetHook : RoxyHooker() {
             RearNotificationCards.post = { key, views -> postNotificationMirror(key, views) }
             RearNotificationCards.remove = { key -> removeNotificationMirror(key) }
             RearNotificationCards.reconcile = { keys -> reconcileNotificationMirrors(keys) }
+            RearNotificationCards.hasNativeCard = { sourceKey ->
+                runCatching {
+                    val records = manager?.asResolver()?.firstField {
+                        name = resolveSmartAssistantManagerWidgetListFieldName()
+                    }?.get<List<Any>>().orEmpty()
+                    records.any { record ->
+                        managerWidgetBundle(record)?.getString("business") != RearNotificationCards.BUSINESS &&
+                            record.javaClass.declaredFields.filter { it.type == String::class.java }.any { field ->
+                                field.isAccessible = true
+                                field.get(record) == sourceKey
+                            }
+                    }
+                }.getOrDefault(false)
+            }
             debugLog("onHook start")
 
             val versionCode = resolveHookPackageVersionCode(
@@ -2164,7 +2179,14 @@ class RearWidgetHook : RoxyHooker() {
             applyRuntimeMaps(force = false)
             patchManagerAppGates(manager)
             applyNoticeDisplayByCompositeKey(ticket.compositeKey)
-            true
+            val records = manager?.asResolver()?.firstField {
+                name = resolveSmartAssistantManagerWidgetListFieldName()
+            }?.get<List<Any>>()
+            val accepted = records?.any {
+                managerWidgetBundle(it)?.getString("composite_key") == ticket.compositeKey
+            } == true
+            debugLog("notification mirror native record accepted=$accepted")
+            accepted
         }.onFailure { YLog.warn("Notification mirror injection failed: ${it.javaClass.simpleName}") }
             .getOrDefault(false)
     }
@@ -2583,6 +2605,12 @@ class RearWidgetHook : RoxyHooker() {
         }.getOrNull() ?: return false
 
         val recordUpdated = updateManagerWidgetRecord(notice, extras)
+        if (!recordUpdated && notice.ticket.business == RearNotificationCards.BUSINESS) {
+            // A detached RemoteViews instance can outlive the manager record after
+            // listener reconnect. Updating it would leave the pull-down panel empty.
+            liveNotificationWidgets.remove(notice.ticket.compositeKey)
+            return false
+        }
         val liveUpdated = updateLiveNotificationWidget(notice.ticket.compositeKey, extras)
         if (liveUpdated) {
             debugLog("updated live widget key=${notice.ticket.compositeKey} business=${notice.ticket.business}")
@@ -2614,7 +2642,9 @@ class RearWidgetHook : RoxyHooker() {
                 notice.ticket.compositeKey,
                 extras,
             ) as? Runnable ?: return
-            handler.post(runnable)
+            if (notice.ticket.business == RearNotificationCards.BUSINESS &&
+                Looper.myLooper() == Looper.getMainLooper()) runnable.run()
+            else handler.post(runnable)
             debugLog("injected ticket key=${notice.ticket.compositeKey} business=${notice.ticket.business}")
         }.onFailure {
             debugLog("inject failed key=$compositeKey err=${it.message}")
@@ -2626,7 +2656,7 @@ class RearWidgetHook : RoxyHooker() {
         val handler = mainHandler ?: return
         liveNotificationWidgets.remove(ticket.compositeKey)
         runCatching {
-            handler.post {
+            val eject = Runnable {
                 runCatching {
                     invokeSmartAssistantManagerRemoveNotification(
                         target = mgr,
@@ -2639,6 +2669,11 @@ class RearWidgetHook : RoxyHooker() {
                     debugLog("eject failed key=${ticket.compositeKey} err=${it.message}")
                 }
             }
+            // Finish source removal before a reconnect can publish its replacement
+            // with the same stable card id and native notification id.
+            if (ticket.business == RearNotificationCards.BUSINESS &&
+                Looper.myLooper() == Looper.getMainLooper()) eject.run()
+            else handler.post(eject)
         }.onFailure {
             debugLog("eject schedule failed key=${ticket.compositeKey} err=${it.message}")
         }

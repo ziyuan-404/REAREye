@@ -11,6 +11,7 @@ import android.graphics.drawable.ColorDrawable
 import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Display
 import android.view.InputEvent
@@ -42,6 +43,7 @@ class RearChargingHook : RoxyHooker() {
     private var status = BatteryManager.BATTERY_STATUS_UNKNOWN
     private var deadline = 0L
     private var suppressed = false
+    private var nextWindowAttempt = 0L
     private var enabled: () -> Boolean = { false }
     private var keepVisible: () -> Boolean = { false }
     private val timeout = Runnable { if (!keepVisible()) dismiss() }
@@ -67,6 +69,7 @@ class RearChargingHook : RoxyHooker() {
     private fun attach(ctx: Context) {
         if (context != null) return
         context = ctx
+        YLog.info("[REAREye-Charging] attached enabled=${enabled()} persistent=${keepVisible()}")
         interruptForNotification = { suppressed = true; deadline = 0L; dismiss() }
         displays = ctx.getSystemService(DisplayManager::class.java)
         displays?.registerDisplayListener(displayListener, main)
@@ -83,6 +86,8 @@ class RearChargingHook : RoxyHooker() {
                     Intent.ACTION_POWER_CONNECTED -> {
                         plugged = true
                         suppressed = false
+                        nextWindowAttempt = 0L
+                        YLog.info("[REAREye-Charging] power connected enabled=${enabled()}")
                         if (enabled()) {
                             deadline = SystemClock.uptimeMillis() + 8_000L
                             rearDisplay()?.let(::wakeRearDisplay)
@@ -124,6 +129,7 @@ class RearChargingHook : RoxyHooker() {
             else -> "已连接电源 · 暂停充电"
         }
         if (presentation == null) {
+            if (SystemClock.uptimeMillis() < nextWindowAttempt) return
             runCatching {
                 val dialog = Presentation(ctx, display)
                 val view = RearChargingLiquidView(dialog.context)
@@ -142,15 +148,28 @@ class RearChargingHook : RoxyHooker() {
                 dialog.show()
                 dialog.window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
                 view.updateBattery(level, label, animateEntry = true)
+                YLog.info("[REAREye-Charging] shown level=$level")
             }.onFailure {
                 dismiss()
-                YLog.warn("Rear liquid charging window unavailable: ${it.javaClass.simpleName}")
+                nextWindowAttempt = SystemClock.uptimeMillis() + 1_000L
+                YLog.warn("Rear liquid charging window unavailable: ${it.javaClass.simpleName}: ${it.message?.take(160)}")
             }
         } else liquid?.updateBattery(level, label)
     }
 
     private fun wakeRearDisplay(display: Display) {
         // Target only the rear display; never wake the main display or keep a wake loop.
+        // HyperOS' own rear launcher uses this display-aware PowerManager overload.
+        // An injected KEYCODE_WAKEUP alone may leave the rear in DOZE on Android 17.
+        val nativeWake = runCatching {
+            val power = context?.getSystemService(PowerManager::class.java) ?: return@runCatching false
+            PowerManager::class.java.getMethod(
+                "wakeUp", Long::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+                String::class.java, Int::class.javaPrimitiveType,
+            ).invoke(power, SystemClock.uptimeMillis(), 2, "REAREye:rearCharging", display.displayId)
+            true
+        }.getOrDefault(false)
+        if (nativeWake) return
         runCatching {
             val managerClass = Class.forName("android.hardware.input.InputManagerGlobal")
             val manager = managerClass.getMethod("getInstance").invoke(null)

@@ -56,7 +56,8 @@ class ExtraTimeTipHook : RoxyHooker() {
                         if (moreDebug) {
                             YLog.debug("time tip process biz: $business")
                         }
-                        val showTimeTip = pm.getShowTimeTipForBusiness(business)
+                        val showTimeTip = if (business == RearNotificationCards.BUSINESS) false
+                            else pm.getShowTimeTipForBusiness(business)
                         if (args.size > 11) {
                             args[11] = showTimeTip
                         }

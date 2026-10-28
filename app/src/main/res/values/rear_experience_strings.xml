@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="rear_notification_sync">背屏通知常驻与双向同步</string>
-    <string name="rear_notification_sync_desc">将消息和焦点通知适配为下拉“动态通知与便利贴”卡片。主屏移除后同步消失，背屏左右划掉或清除会同步清除主屏通知；持续通知保留原系统限制。重启背屏中心后生效。</string>
+    <string name="rear_notification_sync_desc">沿用原厂通知样式，将消息和未适配的焦点通知保留在下拉“动态通知与便利贴”。主屏移除后同步消失，背屏左右划掉会同步清除主屏通知；持续通知保留原系统限制。重启背屏中心后生效。</string>
     <string name="rear_notification_sync_apps">同步通知的应用</string>
     <string name="rear_notification_sync_apps_desc">未选择时同步所有应用。原生通话、闹钟、倒计时和音乐卡片继续由系统处理。</string>
     <string name="rear_liquid_charging">绿色液体充电动画</string>

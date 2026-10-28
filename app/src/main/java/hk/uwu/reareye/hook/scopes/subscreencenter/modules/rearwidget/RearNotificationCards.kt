@@ -10,4 +10,5 @@ internal object RearNotificationCards {
     var remove: ((String) -> Unit)? = null
     var reconcile: ((Set<String>) -> Unit)? = null
     var onReady: (() -> Unit)? = null
+    var hasNativeCard: ((String) -> Boolean)? = null
 }
