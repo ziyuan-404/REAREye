@@ -6,24 +6,36 @@
         android:layout_height="0dp" android:visibility="gone" />
     <TextView android:id="@+id/rear_notification_redacted" android:layout_width="0dp"
         android:layout_height="0dp" android:visibility="gone" />
-    <FrameLayout android:id="@+id/rear_notification_native_host"
-        android:layout_width="match_parent" android:layout_height="match_parent" />
-    <LinearLayout android:orientation="vertical" android:layout_gravity="bottom"
-        android:paddingHorizontal="12dp" android:layout_marginBottom="16dp"
-        android:layout_width="match_parent" android:layout_height="wrap_content">
-        <ProgressBar android:id="@+id/rear_notification_progress" style="?android:attr/progressBarStyleHorizontal"
-            android:layout_width="match_parent" android:layout_height="6dp" android:visibility="gone" />
-        <Chronometer android:id="@+id/rear_notification_chronometer" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:gravity="center" android:textColor="#FFFFFFFF"
-            android:textSize="18sp" android:visibility="gone" />
-        <LinearLayout android:id="@+id/rear_notification_actions" android:layout_width="match_parent"
-            android:layout_height="32dp" android:layout_marginTop="4dp" android:visibility="gone">
-            <TextView android:id="@+id/rear_notification_action_one" android:layout_width="0dp"
-                android:layout_height="match_parent" android:layout_weight="1" android:gravity="center"
-                android:textSize="13sp" android:textColor="#FFFFFFFF" />
-            <TextView android:id="@+id/rear_notification_action_two" android:layout_width="0dp"
-                android:layout_height="match_parent" android:layout_weight="1" android:gravity="center"
-                android:textSize="13sp" android:textColor="#FFFFFFFF" />
+    <LinearLayout android:orientation="vertical"
+        android:layout_width="match_parent" android:layout_height="match_parent">
+        <FrameLayout android:id="@+id/rear_notification_native_host"
+            android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+        <LinearLayout android:id="@+id/rear_notification_footer" android:orientation="vertical"
+            android:paddingHorizontal="12dp" android:layout_marginBottom="12dp" android:visibility="gone"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <ProgressBar android:id="@+id/rear_notification_progress" style="?android:attr/progressBarStyleHorizontal"
+                android:progressTint="#CCFFFFFF" android:indeterminateTint="#CCFFFFFF" android:progressBackgroundTint="#33FFFFFF"
+                android:layout_width="match_parent" android:layout_height="4dp" android:visibility="gone" />
+            <TextView android:id="@+id/rear_notification_subtext"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" android:gravity="center" android:visibility="gone"
+                android:maxLines="1" android:ellipsize="end" android:textSize="13sp" android:textColor="#CCFFFFFF" />
+            <Chronometer android:id="@+id/rear_notification_chronometer" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:gravity="center" android:textColor="#FFFFFFFF"
+                android:textSize="18sp" android:visibility="gone" />
+            <LinearLayout android:id="@+id/rear_notification_actions" android:layout_width="match_parent"
+                android:layout_height="40dp" android:layout_marginTop="8dp" android:visibility="gone">
+                <TextView android:id="@+id/rear_notification_action_one" android:layout_width="0dp"
+                    android:layout_height="match_parent" android:layout_weight="1" android:gravity="center"
+                    android:layout_marginEnd="4dp" android:background="@drawable/rear_notification_action_background"
+                    android:clickable="true" android:focusable="true" android:maxLines="1" android:ellipsize="end"
+                    android:textSize="14sp" android:textColor="#FFFFFFFF" />
+                <TextView android:id="@+id/rear_notification_action_two" android:layout_width="0dp"
+                    android:layout_height="match_parent" android:layout_weight="1" android:gravity="center"
+                    android:layout_marginStart="4dp" android:background="@drawable/rear_notification_action_background"
+                    android:clickable="true" android:focusable="true" android:maxLines="1" android:ellipsize="end"
+                    android:textSize="14sp" android:textColor="#FFFFFFFF" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

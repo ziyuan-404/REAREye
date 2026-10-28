@@ -2,12 +2,15 @@ package hk.uwu.reareye.hook.scopes.subscreencenter.modules.rearwidget
 
 import android.app.KeyguardManager
 import android.app.Notification
+import android.app.ActivityOptions
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Outline
 import android.graphics.Rect
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
@@ -21,10 +24,13 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.Display
+import android.view.Gravity
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.RemoteViews
 import android.widget.TextView
 import android.widget.ImageView
+import android.widget.LinearLayout
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import hk.uwu.reareye.R
 import hk.uwu.reareye.hook.support.YLog
@@ -40,6 +46,9 @@ import hk.uwu.reareye.ui.config.ConfigKeys
 import hk.uwu.roxyhook.PackageScope
 import hk.uwu.roxyhook.RoxyHooker
 import org.json.JSONObject
+import org.json.JSONArray
+import java.io.File
+import java.util.zip.ZipFile
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -61,13 +70,21 @@ class RearNotificationSyncHook : RoxyHooker() {
     private var receiverContext: Context? = null
     private var screenLocked = false
     private var visibleSourceKeys: Set<String>? = null
-    private var blendNativeBackground: ((View, IntArray, IntArray) -> Unit)? = null
     private var panelOwnsGesture = false
+    private var continueOnFront: (StatusBarNotification) -> Boolean = { false }
+    private val frontContinuations = linkedSetOf<String>()
+    private var flipIcon: Bitmap? = null
     private val rankingRefresh = Runnable { reconcile() }
     private val privacyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == Intent.ACTION_SCREEN_OFF) screenLocked = true
-            if (intent.action == Intent.ACTION_USER_PRESENT) screenLocked = false
+            if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                screenLocked = true
+            }
+            if (intent.action == Intent.ACTION_USER_PRESENT) {
+                screenLocked = false
+                frontContinuations.forEach { rendered.remove(it) }
+                frontContinuations.clear()
+            }
             main.post { reconcile() }
         }
     }
@@ -77,6 +94,12 @@ class RearNotificationSyncHook : RoxyHooker() {
             enabled = { hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false) }
             apps = { hookPrefs.getStringSet(ConfigKeys.REAR_NOTIFICATION_SYNC_APPS, emptySet()) }
             debugEnabled = { hookPrefs.getBoolean(ConfigKeys.MORE_DEBUG, false) }
+            continueOnFront = { sbn ->
+                // Adapt a known detail flow, rather than treating every message
+                // as a front-screen handoff. Other applications are opt-in.
+                (sbn.packageName == "com.android.chrome" && sbn.notification.channelId == "downloads") ||
+                    sbn.packageName in hookPrefs.getStringSet(ConfigKeys.REAR_NOTIFICATION_FRONT_APPS, emptySet())
+            }
             runCatching { installNativePanelBehavior() }.onFailure {
                 YLog.warn("Rear native panel behavior unavailable: ${it.javaClass.simpleName}")
             }
@@ -253,19 +276,29 @@ class RearNotificationSyncHook : RoxyHooker() {
             setTextViewText(R.id.rear_notification_token, token)
             setTextViewText(R.id.rear_notification_redacted, if (redacted) "1" else "0")
             if (!redacted) {
-                n.contentIntent?.let { setOnClickPendingIntent(R.id.rear_notification_card, it) }
+                n.contentIntent?.takeUnless { it.isActivity && continueOnFront(sbn) }
+                    ?.let { setOnClickPendingIntent(R.id.rear_notification_card, it) }
                 val maximum = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
                 val indeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
-                if (maximum > 0 || indeterminate) {
+                val hasProgress = maximum > 0 || indeterminate
+                val hasChronometer = extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false) && n.`when` > 0L
+                val actions = n.actions.orEmpty().filter { it.actionIntent != null && it.remoteInputs.isNullOrEmpty() }.take(2)
+                if (hasProgress || hasChronometer || actions.isNotEmpty()) {
+                    setViewVisibility(R.id.rear_notification_footer, View.VISIBLE)
+                    extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.takeIf { it.isNotBlank() }?.let {
+                        setViewVisibility(R.id.rear_notification_subtext, View.VISIBLE)
+                        setTextViewText(R.id.rear_notification_subtext, it)
+                    }
+                }
+                if (hasProgress) {
                     setViewVisibility(R.id.rear_notification_progress, View.VISIBLE)
                     setProgressBar(R.id.rear_notification_progress, maximum.coerceAtLeast(1), extras.getInt(Notification.EXTRA_PROGRESS, 0), indeterminate)
                 }
-                if (extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false) && n.`when` > 0L) {
+                if (hasChronometer) {
                     setViewVisibility(R.id.rear_notification_chronometer, View.VISIBLE)
                     setChronometer(R.id.rear_notification_chronometer, SystemClock.elapsedRealtime() + n.`when` - System.currentTimeMillis(), null, true)
                     setChronometerCountDown(R.id.rear_notification_chronometer, extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false))
                 }
-                val actions = n.actions.orEmpty().filter { it.actionIntent != null && it.remoteInputs.isNullOrEmpty() }.take(2)
                 if (actions.isNotEmpty()) setViewVisibility(R.id.rear_notification_actions, View.VISIBLE)
                 val ids = listOf(R.id.rear_notification_action_one, R.id.rear_notification_action_two)
                 ids.forEachIndexed { index, id ->
@@ -336,24 +369,64 @@ class RearNotificationSyncHook : RoxyHooker() {
             it.layoutParams = it.layoutParams.apply { width = cameraWidth }
         }
         val margin = context.resources.getDimensionPixelSize(hostId("notification_container_margin_horizontal", "dimen"))
-        (view.findViewById<View>(R.id.rear_notification_progress)?.parent as? View)?.let {
+        view.findViewById<View>(R.id.rear_notification_footer)?.let {
             it.setPadding(cameraWidth + margin, it.paddingTop, margin, it.paddingBottom)
+            if (it.visibility == View.VISIBLE) {
+                // Task notifications need space for live progress and actions.
+                // The footer is measured separately; compact only the content
+                // above it, leaving ordinary QQ/WeChat cards at stock sizes.
+                fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
+                val icon = nativeRoot.findViewById<ImageView>(hostId("notification_icon"))
+                icon.apply {
+                    layoutParams = layoutParams.apply { width = dp(40); height = dp(40) }
+                }
+                nativeRoot.findViewById<ImageView>(hostId("notification_small_icon")).apply {
+                    layoutParams = (layoutParams as android.widget.FrameLayout.LayoutParams).apply {
+                        width = dp(14); height = dp(14); topMargin = dp(28); marginStart = dp(16)
+                    }
+                }
+                val titleView = nativeRoot.findViewById<TextView>(hostId("notification_title")).apply {
+                    maxLines = 2
+                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, dp(16).toFloat())
+                    setLineHeight(dp(20))
+                    setLineSpacing(0f, 1f)
+                    gravity = Gravity.START
+                }
+                val bodyView = nativeRoot.findViewById<TextView>(hostId("notification_content")).apply {
+                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, dp(13).toFloat())
+                    setLineHeight(dp(18))
+                    gravity = Gravity.START
+                    val hasProgress = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0) > 0 ||
+                        extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
+                    maxLines = if (hasProgress) 1 else 2
+                    if (hasProgress) {
+                        val parts = Regex("^已下载\\s*(.+?)[,，]\\s*共\\s*(.+)$").matchEntire(body)
+                        if (parts != null) text = "${parts.groupValues[1]} / ${parts.groupValues[2]}"
+                        contentDescription = body
+                    }
+                }
+                val container = nativeRoot.findViewById<LinearLayout>(hostId("notification_container"))
+                val imageFrame = icon.parent as View
+                container.removeAllViews()
+                val header = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                header.addView(imageFrame, LinearLayout.LayoutParams(dp(42), dp(42)))
+                val labels = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+                labels.addView(TextView(context).apply {
+                    text = app; setTextColor(0xCCFFFFFF.toInt()); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, dp(12).toFloat())
+                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                labels.addView(titleView, LinearLayout.LayoutParams(-1, -2))
+                header.addView(labels, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(10) })
+                container.addView(header, LinearLayout.LayoutParams(-1, -2))
+                container.addView(bodyView, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+            }
         }
         nativeRoot.setOnClickListener { view.performClick() }
         nativeRoot.findViewById<View>(hostId("notification_container")).setOnClickListener { view.performClick() }
         nativeHost.removeAllViews()
         nativeHost.addView(nativeRoot)
-        runCatching {
-            // NotificationPanel's constructor and setBackgroundBlurProgress(1):
-            // use the ROM's own blur radius and blend colors, not an opaque fill.
-            View::class.java.getMethod("setMiBackgroundBlurMode", Int::class.javaPrimitiveType).invoke(nativeRoot, 1)
-            View::class.java.getMethod("setMiViewBlurMode", Int::class.javaPrimitiveType).invoke(nativeRoot, 1)
-            View::class.java.getMethod("setMiBackgroundBlurRadius", Int::class.javaPrimitiveType).invoke(
-                nativeRoot, context.resources.getDimensionPixelSize(hostId("notification_panel_blur_radius", "dimen")))
-            blendNativeBackground?.invoke(nativeRoot,
-                context.resources.getIntArray(hostId("notification_blur_color", "array")),
-                context.resources.getIntArray(hostId("notification_blur_mode", "array")))
-        }.onFailure { YLog.warn("Native rear notification blur unavailable: ${it.javaClass.simpleName}") }
+        // SmartAssistantPanel owns the stock background and wake/AOD transitions.
+        // Keep mirror content transparent; do not add nested blur or blend layers.
     }
 
     private fun PackageScope.installNativePanelBehavior() {
@@ -376,14 +449,31 @@ class RearNotificationSyncHook : RoxyHooker() {
             dataDir = hookAppInfo.dataDir,
         ))
         runCatching {
-            val point = requireNotNull(resolveDexKitMethodInjectionPoint(bridge, "SSC_NOTIFICATION_NATIVE_BLEND") {
-                findMethod { matcher { paramTypes("android.view.View", "int[]", "int[]"); returnType = "void";
-                    usingStrings("addMiBackgroundBlendColor") } }.singleOrNull()
+            val update = requireNotNull(resolveDexKitMethodInjectionPoint(bridge, "SSC_MIRROR_AOD_NATIVE_UPDATE") {
+                findMethod { matcher { paramTypes("boolean"); returnType = "void";
+                    usingStrings("updateViews: mInAod = ") } }.singleOrNull()
             })
-            val method = point.className.toClass().getDeclaredMethod(point.methodName,
-                View::class.java, IntArray::class.java, IntArray::class.java).apply { isAccessible = true }
-            blendNativeBackground = { view, colors, modes -> method.invoke(null, view, colors, modes) }
-        }.onFailure { YLog.warn("Native rear blend resolver unavailable: ${it.javaClass.simpleName}") }
+            val widgetClass = update.className.toClass()
+            val replace = widgetClass.getDeclaredMethod(update.methodName, Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }
+            val aodChanged = widgetClass.declaredMethods.single {
+                it.name != update.methodName && it.returnType == Void.TYPE &&
+                    it.parameterTypes.contentEquals(arrayOf(Boolean::class.javaPrimitiveType))
+            }
+            val payload = widgetClass.fields.single { it.type == android.os.Bundle::class.java }
+            widgetClass.resolve().firstMethod { name = aodChanged.name; parameterCount = 1 }.hook {
+                before {
+                    val widget = instance ?: return@before
+                    val bundle = payload.get(widget) as? android.os.Bundle ?: return@before
+                    if (bundle.getString("business") != RearNotificationCards.BUSINESS) return@before
+                    // Use the native initial/update path without stacking an
+                    // identical second text layer during the system power fade.
+                    replace.invoke(widget, false)
+                    result = null
+                }
+            }
+            YLog.info("[REAREye-NotificationSync] native AOD single-view update installed")
+        }.onFailure { YLog.warn("Native rear AOD update unavailable: ${it.javaClass.simpleName}") }
         runCatching {
             val point = requireNotNull(resolveDexKitMethodInjectionPoint(bridge, "SSC_CAMERA_GESTURE_PRECHECK") {
                 findMethod { matcher { paramTypes("android.view.MotionEvent"); returnType = "boolean";
@@ -394,6 +484,56 @@ class RearNotificationSyncHook : RoxyHooker() {
             }
             YLog.info("[REAREye-NotificationSync] panel camera gesture guard installed")
         }.onFailure { YLog.warn("Rear camera gesture guard unavailable: ${it.javaClass.simpleName}") }
+    }
+
+    private fun showFrontContinuation(view: View) {
+        val host = view.findViewById<ViewGroup>(R.id.rear_notification_native_host) ?: return
+        val context = view.context
+        fun dp(n: Int) = (n * context.resources.displayMetrics.density).toInt()
+        val prompt = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding((view.display?.cutout?.safeInsetLeft ?: 0) + dp(30), 0, dp(30), 0)
+        }
+        val image = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            loadNativeFlipIcon()?.let(::setImageBitmap)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        prompt.addView(image, LinearLayout.LayoutParams(dp(32), dp(32)).apply { bottomMargin = dp(24) })
+        prompt.addView(TextView(context).apply {
+            text = "请翻转手机，到主屏继续使用"
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, dp(16).toFloat())
+            setTextColor(0xF2FFFFFF.toInt())
+            gravity = Gravity.CENTER
+            maxLines = 2
+            setLineHeight(dp(22))
+        }, LinearLayout.LayoutParams(-1, -2))
+        prompt.setOnClickListener { view.performClick() }
+        host.removeAllViews()
+        host.addView(prompt, ViewGroup.LayoutParams(-1, -1))
+        view.findViewById<View>(R.id.rear_notification_footer)?.visibility = View.GONE
+    }
+
+    private fun loadNativeFlipIcon(): Bitmap? {
+        flipIcon?.let { return it }
+        return runCatching {
+            val root = "/data/system/theme_magic/users/${Process.myUid() / 100_000}"
+            val config = File("$root/subscreencenter/config/appInfo.json")
+            require(config.length() in 1..2_000_000L)
+            val entries = JSONArray(config.readText())
+            val archive = (0 until entries.length()).asSequence().map { entries.getJSONObject(it) }
+                .first { it.optString("bindApp") == "com.xiaomi.smarthome" }.getString("mtzPath")
+            val path = File(archive).canonicalPath
+            require(path.startsWith("$root/back_screen_card/") || path.startsWith("/system/media/rearscreen/"))
+            ZipFile(path).use { zip ->
+                val entry = requireNotNull(zip.getEntry("assets/flip_icon.png"))
+                require(entry.size in 1..256_000L)
+                val bytes = zip.getInputStream(entry).use { it.readNBytes(256_001) }
+                require(bytes.size <= 256_000)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also { flipIcon = it }
+            }
+        }.onFailure { YLog.warn("Native flip icon unavailable: ${it.javaClass.simpleName}") }.getOrNull()
     }
 
     private fun focusText(notification: Notification, names: List<String>): String? = runCatching {
@@ -427,6 +567,21 @@ class RearNotificationSyncHook : RoxyHooker() {
             YLog.warn("Native rear notification layout unavailable: ${it.javaClass.simpleName}")
             main.post { hide(key) }
             return
+        }
+        if (!redacted && sbn.notification.contentIntent?.isActivity == true && continueOnFront(sbn)) {
+            view.isClickable = true
+            view.setOnClickListener {
+                if (key in frontContinuations) {
+                    frontContinuations.remove(key)
+                    active[key]?.let { publish(it, force = true) }
+                } else runCatching {
+                    val options = ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
+                    sbn.notification.contentIntent.send(view.context, 0, null, null, null, null, options)
+                    frontContinuations.add(key)
+                    showFrontContinuation(view)
+                }.onFailure { YLog.warn("Front notification open unavailable: ${it.javaClass.simpleName}") }
+            }
+            if (key in frontContinuations) showFrontContinuation(view)
         }
         if (!sbn.isClearable) return
         view.isClickable = true
@@ -492,6 +647,7 @@ class RearNotificationSyncHook : RoxyHooker() {
     }
 
     private fun hide(key: String) {
+        frontContinuations.remove(key)
         rendered.remove(key)
         if (shown.remove(key)) RearNotificationCards.remove?.invoke(key)
     }
@@ -505,13 +661,14 @@ class RearNotificationSyncHook : RoxyHooker() {
             try {
                 main.removeCallbacksAndMessages(null)
                 clear()
+                flipIcon = null
                 receiverContext?.unregisterReceiver(privacyReceiver)
                 receiverContext = null
                 listener = null
                 RearNotificationCards.onReady = null
                 RearNotificationCards.setVisibleSourceKeys = null
                 visibleSourceKeys = null
-                blendNativeBackground = null
+                continueOnFront = { false }
                 panelOwnsGesture = false
             } finally { done.countDown() }
         }

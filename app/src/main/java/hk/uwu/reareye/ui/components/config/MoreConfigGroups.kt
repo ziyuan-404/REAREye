@@ -69,6 +69,7 @@ internal val MoreConfigGroups = listOf(
             ConfigKeys.HOOK_ALLOW_REAR_FOCUS_NOTICES,
             ConfigKeys.REAR_NOTIFICATION_SYNC,
             ConfigKeys.REAR_NOTIFICATION_SYNC_APPS,
+            ConfigKeys.REAR_NOTIFICATION_FRONT_APPS,
         ),
     ),
     MoreConfigGroup(

@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="rear_notification_front_apps">通知点按后转主屏的应用</string>
+    <string name="rear_notification_front_apps_desc">Chrome 下载详情已适配为到主屏继续使用。其他应用仅在此勾选后显示翻转提示；未勾选则保留原点按行为。暂停、继续等通知操作按钮保持原功能。重启背屏中心后生效。</string>
     <string name="rear_screen_timeout">背屏亮屏时长</string>
     <string name="rear_screen_timeout_desc">背屏桌面与下拉面板在最后一次操作后继续亮屏所选时长，之后恢复系统息屏。手动息屏仍生效。修改后重启背屏中心。</string>
     <string name="rear_timeout_system">跟随系统</string>

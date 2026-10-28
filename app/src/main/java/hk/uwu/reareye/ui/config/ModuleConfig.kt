@@ -55,6 +55,7 @@ object ConfigKeys {
     const val HOOK_ALLOW_REAR_FOCUS_NOTICES = "enable_allow_rear_focus_notices"
     const val REAR_NOTIFICATION_SYNC = "rear_notification_sync"
     const val REAR_NOTIFICATION_SYNC_APPS = "rear_notification_sync_apps"
+    const val REAR_NOTIFICATION_FRONT_APPS = "rear_notification_front_apps"
     const val REAR_LIQUID_CHARGING = "rear_liquid_charging"
     const val REAR_LIQUID_CHARGING_PERSISTENT = "rear_liquid_charging_persistent"
     const val REAR_SCREEN_TIMEOUT_SECONDS = "rear_screen_timeout_seconds"
@@ -483,6 +484,12 @@ val REAREyeConfig = listOf(
                         key = ConfigKeys.REAR_NOTIFICATION_SYNC_APPS,
                         titleRes = R.string.rear_notification_sync_apps,
                         descriptionRes = R.string.rear_notification_sync_apps_desc,
+                        type = ConfigType.AppList(defaultValues = emptySet()),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_NOTIFICATION_FRONT_APPS,
+                        titleRes = R.string.rear_notification_front_apps,
+                        descriptionRes = R.string.rear_notification_front_apps_desc,
                         type = ConfigType.AppList(defaultValues = emptySet()),
                     ),
                     ConfigItem(
