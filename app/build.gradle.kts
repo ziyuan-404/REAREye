@@ -33,7 +33,8 @@ roxy {
             "com.miui.personalassistant",
             "com.miui.weather2",
             "com.miui.gallery",
-            "com.miui.voiceassist"
+            "com.miui.voiceassist",
+            "com.baidu.input_mi"
         )
     )
     nativeEntries.set(

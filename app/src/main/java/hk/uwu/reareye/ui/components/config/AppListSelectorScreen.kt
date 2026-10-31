@@ -583,7 +583,13 @@ fun AppListSelectorScreen(
         }
 
         val loadedSelection = withContext(Dispatchers.IO) {
-            prefsManager.getStringSet(configItem.key, configItem.type.defaultStringSet)
+            val selected = prefsManager.getStringSet(configItem.key, configItem.type.defaultStringSet)
+            if (configItem.key != ConfigKeys.ACTIVITIES_WHITELIST_APPS) selected
+            else {
+                val saved = prefsManager.getString(ConfigKeys.REAR_APP_ORDER_DATA, "")
+                    .split('\n').map(String::trim).filter { it.isNotBlank() }
+                saved.filter { it in selected } + selected.filter { it !in saved }.sorted()
+            }
         }
         selectedOrder.clear()
         selectedOrder.addAll(loadedSelection)
@@ -895,6 +901,9 @@ fun AppListSelectorScreen(
                 onClick = {
                     if (!selectedOrderLoaded) return@FloatingActionButton
                     prefsManager.putStringSet(configItem.key, selectedLookup)
+                    if (configItem.key == ConfigKeys.ACTIVITIES_WHITELIST_APPS) {
+                        prefsManager.putString(ConfigKeys.REAR_APP_ORDER_DATA, selectedOrder.joinToString("\n"))
+                    }
                     onSave()
                 },
             ) {

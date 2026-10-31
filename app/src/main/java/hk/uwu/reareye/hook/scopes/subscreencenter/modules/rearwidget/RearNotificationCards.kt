@@ -12,5 +12,5 @@ internal object RearNotificationCards {
     var onReady: (() -> Unit)? = null
     var hasNativeCard: ((String) -> Boolean)? = null
     var hasMirrorCard: ((String) -> Boolean)? = null
-    var setVisibleSourceKeys: ((Set<String>) -> Unit)? = null
+    var setVisibleSourceKeys: ((Set<String>, Map<String, String>) -> Unit)? = null
 }

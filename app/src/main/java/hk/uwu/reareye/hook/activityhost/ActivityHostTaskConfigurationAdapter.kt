@@ -14,6 +14,12 @@ import kotlin.math.min
 
 /** All hidden/server ABI lives here. Missing ABI fails closed without dumping app identities. */
 internal object ActivityHostTaskConfigurationAdapter {
+    private val fields=object:ClassValue<java.util.concurrent.ConcurrentHashMap<String,Field>>() {
+        override fun computeValue(type:Class<*>)=java.util.concurrent.ConcurrentHashMap<String,Field>()
+    }
+    private val zeroArgMethods=object:ClassValue<java.util.concurrent.ConcurrentHashMap<String,Method>>() {
+        override fun computeValue(type:Class<*>)=java.util.concurrent.ConcurrentHashMap<String,Method>()
+    }
     private val COMPAT_FIELDS =
         listOf("compatScreenWidthDp", "compatScreenHeightDp", "compatSmallestScreenWidthDp")
 
@@ -22,11 +28,13 @@ internal object ActivityHostTaskConfigurationAdapter {
     }.getOrNull()
 
     private fun fieldOf(type: Class<*>, name: String): Field {
+        fields.get(type)[name]?.let { return it }
         var current: Class<*>? = type
         while (current != null) {
             val candidate = current
             runCatching { candidate.getDeclaredField(name) }.getOrNull()?.let {
                 it.isAccessible = true
+                fields.get(type)[name]=it
                 return it
             }
             current = candidate.superclass
@@ -35,11 +43,13 @@ internal object ActivityHostTaskConfigurationAdapter {
     }
 
     private fun methodOf(type: Class<*>, name: String, vararg types: Class<*>): Method {
+        if(types.isEmpty())zeroArgMethods.get(type)[name]?.let { return it }
         var current: Class<*>? = type
         while (current != null) {
             val candidate = current
             runCatching { candidate.getDeclaredMethod(name, *types) }.getOrNull()?.let {
                 it.isAccessible = true
+                if(types.isEmpty())zeroArgMethods.get(type)[name]=it
                 return it
             }
             current = candidate.superclass
@@ -195,6 +205,9 @@ internal object ActivityHostTaskConfigurationAdapter {
                             Configuration::class.java
                         )
                             .invoke(task, configuration)
+                        // Dispatch the recomputed activity override to its process,
+                        // including a visible task adopted after a module update.
+                        call(task,"getTopMostActivity")?.let { call(it,"ensureActivityConfiguration") }
                     }.onFailure { onFailure() }
                 }
             }

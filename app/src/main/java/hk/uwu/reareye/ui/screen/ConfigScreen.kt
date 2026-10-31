@@ -58,6 +58,7 @@ import hk.uwu.reareye.ui.components.config.CardManagerScreen
 import hk.uwu.reareye.ui.components.config.ConfigDashboard
 import hk.uwu.reareye.ui.components.config.ConfigNodeRow
 import hk.uwu.reareye.ui.components.config.CustomBoundsCompatManagerScreen
+import hk.uwu.reareye.ui.components.config.RearAppDisplayManagerScreen
 import hk.uwu.reareye.ui.components.config.MoreSearchBottomSheet
 import hk.uwu.reareye.ui.components.config.RearWallpaperManagerScreen
 import hk.uwu.reareye.ui.components.config.SceneRouteManagerScreen
@@ -115,6 +116,7 @@ private sealed interface ConfigRoute {
     data object BusinessExtraManager : ConfigRoute
     data class BusinessExtraDetail(val business: String) : ConfigRoute
     data object CustomBoundsCompatManager : ConfigRoute
+    data object RearAppDisplayManager : ConfigRoute
     data object LyricsManager : ConfigRoute
     data object ScriptManagement : ConfigRoute
     data class WallpaperTemplate(val wallpaper: RearWallpaperInfo) : ConfigRoute
@@ -146,7 +148,8 @@ private fun ConfigRoute.isOverlayRoute(): Boolean {
             this is ConfigRoute.CardManager ||
             this is ConfigRoute.BusinessExtraManager ||
             this is ConfigRoute.BusinessExtraDetail ||
-            this is ConfigRoute.CustomBoundsCompatManager
+            this is ConfigRoute.CustomBoundsCompatManager ||
+            this is ConfigRoute.RearAppDisplayManager
 }
 
 @SuppressLint("LocalContextResourcesRead")
@@ -173,6 +176,7 @@ fun ConfigScreen(
             ConfigType.ManagerType.CARD -> ConfigRoute.CardManager
             ConfigType.ManagerType.BUSINESS_EXTRA -> ConfigRoute.BusinessExtraManager
             ConfigType.ManagerType.BOUNDS -> ConfigRoute.CustomBoundsCompatManager
+            ConfigType.ManagerType.REAR_APP_DISPLAY -> ConfigRoute.RearAppDisplayManager
             ConfigType.ManagerType.LYRICS -> ConfigRoute.LyricsManager
             null -> null
         }
@@ -353,6 +357,12 @@ fun ConfigScreen(
             ConfigType.ManagerType.BOUNDS -> {
                 dashboardTabIndex = 3
                 routeStack = listOf(ConfigRoute.Root, ConfigRoute.CustomBoundsCompatManager)
+                onAppListModeChange(true)
+            }
+
+            ConfigType.ManagerType.REAR_APP_DISPLAY -> {
+                dashboardTabIndex = 3
+                routeStack = listOf(ConfigRoute.Root, ConfigRoute.RearAppDisplayManager)
                 onAppListModeChange(true)
             }
 
@@ -659,6 +669,11 @@ fun ConfigScreen(
                 )
 
                 ConfigRoute.CustomBoundsCompatManager -> CustomBoundsCompatManagerScreen(
+                    prefsManager = prefsManager,
+                    onBack = { closeOverlayRoute() },
+                )
+
+                ConfigRoute.RearAppDisplayManager -> RearAppDisplayManagerScreen(
                     prefsManager = prefsManager,
                     onBack = { closeOverlayRoute() },
                 )

@@ -54,10 +54,12 @@ import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import kotlin.math.roundToInt
 
 @Composable
 fun ConfigNodeRow(
@@ -308,6 +310,63 @@ fun MaskMultiSelectConfigInput(
 
 @SuppressLint("LocalContextGetResourceValueCall")
 @Composable
+fun DensityDpiConfigInput(
+    item: ConfigItem,
+    defaultValue: Int,
+    prefsManager: PrefsManager,
+    onPreferenceChanged: (ConfigItem) -> Unit = {},
+) {
+    var value by remember(item.key) { mutableIntStateOf(prefsManager.getInt(item.key, defaultValue)) }
+    val remoteRevision = rememberRemotePrefsStatusRevision()
+    // A preference write also increments remoteRevision. Reading an older service
+    // snapshot back during a drag used to snap the slider back and overwrite DPI.
+    var edited by remember(item.key) { mutableStateOf(false) }
+    LaunchedEffect(remoteRevision) {
+        if (!edited && prefsManager.isRemoteReady()) value = prefsManager.getInt(item.key, defaultValue)
+    }
+    LaunchedEffect(value, edited) {
+        if (edited) {
+            kotlinx.coroutines.delay(300L)
+            prefsManager.putInt(item.key, value)
+            onPreferenceChanged(item)
+        }
+    }
+    fun save(next: Int) {
+        edited = true
+        value = next
+    }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Text(stringResource(item.titleRes), fontSize = 17.sp)
+        item.descriptionRes?.let {
+            Text(stringResource(it), color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.padding(top = 4.dp))
+        }
+        SwitchPreference(
+            title = stringResource(R.string.rear_app_dpi_system),
+            checked = value == 0,
+            onCheckedChange = { save(if (it) 0 else defaultValue) },
+        )
+        if (value != 0) {
+            Text(stringResource(R.string.rear_app_dpi_current, value))
+            Slider(
+                value = value.coerceIn(120, 960).toFloat(),
+                valueRange = 120f..960f,
+                steps = 83,
+                onValueChange = { raw ->
+                    val next = (raw / 10f).roundToInt().coerceIn(12, 96) * 10
+                    if (next != value) save(next)
+                },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+        }
+        Button(onClick = { save(defaultValue) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Text(stringResource(R.string.rear_app_dpi_reset))
+        }
+    }
+}
+
+@SuppressLint("LocalContextGetResourceValueCall")
+@Composable
 fun EnumSingleSelectConfigInput(
     item: ConfigItem,
     defaultValue: Int,
@@ -321,6 +380,13 @@ fun EnumSingleSelectConfigInput(
     val showEnumPopup = remember(item.key) { mutableStateOf(false) }
     var selectedValue by remember(item.key) {
         mutableIntStateOf(prefsManager.getInt(item.key, defaultValue))
+    }
+    val remoteRevision = rememberRemotePrefsStatusRevision()
+    var edited by remember(item.key) { mutableStateOf(false) }
+    LaunchedEffect(remoteRevision) {
+        if (!edited && prefsManager.isRemoteReady()) {
+            selectedValue = prefsManager.getInt(item.key, defaultValue)
+        }
     }
     val optionTitles = remember(item.key, options, configuration) {
         options.map { context.getString(it.titleRes) }
@@ -373,6 +439,7 @@ fun EnumSingleSelectConfigInput(
                             popupScope.launch {
                                 withFrameNanos { }
                                 selectedValue = option.value
+                                  edited = true
                                 prefsManager.putInt(item.key, selectedValue)
                                 onPreferenceChanged(item)
                             }

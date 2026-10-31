@@ -187,6 +187,7 @@ class MainActivity : ComponentActivity() {
                     if (!remotePrefsManager.isRemoteReady()) {
                         null
                     } else {
+                        hk.uwu.reareye.ui.config.InitialSettingsMigration.apply(applicationContext, remotePrefsManager)
                         val rawQuickActionIds = remotePrefsManager.getString(
                             ConfigKeys.MODULE_NAVIGATION_QUICK_ACTIONS
                         )
@@ -548,6 +549,7 @@ class MainActivity : ComponentActivity() {
                                                             target.managerType in setOf(
                                                                 ConfigType.ManagerType.SCENE_ROUTE,
                                                                 ConfigType.ManagerType.BOUNDS,
+                                                                ConfigType.ManagerType.REAR_APP_DISPLAY,
                                                             )
                                                         currentScreen = "config"
                                                     }

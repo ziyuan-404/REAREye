@@ -223,16 +223,17 @@ class ActivityHostTaskConfigurationHook : RoxyHooker() {
                     name = "resolveOverrideConfiguration"
                     parameterCount = 1
                 }.hook {
-                    hotReloadPolicy = HotReloadPolicy.KEEP
+                    hotReloadPolicy = HotReloadPolicy.REINSTALL
                     after {
                         val record = instance ?: return@after
+                        val parent = args(0).value as? Configuration
+                        if (parent != null) RearAppDensityHook.applyConfiguration(record, parent)
                         val configuration = spec(record) ?: return@after
                         if (configuration.dpi == 0) {
                             ActivityHostTaskConfigurationAdapter.task(record)
                                 ?.let(ledger::markConfigured)
                             return@after
                         }
-                        val parent = args(0).value as? Configuration
                         val resolved = ActivityHostTaskConfigurationAdapter.resolved(record)
                         val applied = parent != null && resolved != null && runCatching {
                             ActivityHostTaskConfigurationAdapter.apply(

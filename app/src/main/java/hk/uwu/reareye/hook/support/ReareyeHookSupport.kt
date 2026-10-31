@@ -31,6 +31,7 @@ class ReareyePrefs internal constructor(
     private val scope: PackageScope,
     private val delegate: Preferences?,
 ) : HookPrefs {
+    override fun observe(listener:(String?)->Unit):AutoCloseable?=delegate?.observe(listener)
     override fun getString(key: String, defaultValue: String): String =
         delegate?.get(stringPreference(key, defaultValue)) ?: defaultValue
 
@@ -78,11 +79,14 @@ val PackageScope.isRearDevice: Boolean
 
 private fun resolveSystemContext(scope: PackageScope): Context {
     if (scope.isSystemServer) return scope.roxySystemContext
-    scope.hookAppContext?.let { return it }
+    scope.hookAppContext?.takeIf { it.packageName==scope.packageName }?.let { return it }
     return runCatching {
         val threadClass = Class.forName("android.app.ActivityThread", false, scope.appClassLoader)
         val thread = threadClass.getMethod("currentActivityThread").invoke(null)
-        threadClass.getMethod("getSystemContext").invoke(thread) as Context
+        val system=threadClass.getMethod("getSystemContext").invoke(thread) as Context
+        // Before Application.attach the thread's system context belongs to android.
+        // Use the injected process package for receiver identity and private caches.
+        system.createPackageContext(scope.packageName, 0)
     }.getOrElse { error("Unable to resolve system context for ${scope.packageName}") }
 }
 

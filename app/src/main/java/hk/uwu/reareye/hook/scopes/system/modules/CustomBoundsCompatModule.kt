@@ -59,6 +59,11 @@ class CustomBoundsCompatModule : RoxyHooker() {
                         if (moreDebug) YLog.debug("[$TAG] skip reason=no_package")
                         return@after
                     }
+                    // The Leica camera port applies its own rear-display geometry in the
+                    // camera process. Do not let the generic compatibility editor overwrite it.
+                    if (packageName in setOf("com.android.camera", "com.kobbin.leicaflavor", "xyz.shuncongci.leica")) {
+                        return@after
+                    }
                     val config = CustomBoundsCompatHookConfig.find(
                         raw = hookPrefs.getString(
                             ConfigKeys.CUSTOM_BOUNDS_COMPAT_CONFIG_DATA,

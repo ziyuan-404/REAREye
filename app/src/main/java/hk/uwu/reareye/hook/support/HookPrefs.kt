@@ -44,6 +44,8 @@ object RemoteFileName {
  * 感知底层存储实现。
  */
 interface HookPrefs {
+    /** Observe remote changes; implementations without notifications return null. */
+    fun observe(listener:(String?)->Unit):AutoCloseable?=null
     /** 读取字符串值。 */
     fun getString(key: String, defaultValue: String = ""): String
 

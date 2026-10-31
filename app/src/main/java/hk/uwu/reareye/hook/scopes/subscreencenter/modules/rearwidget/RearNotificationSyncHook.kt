@@ -9,8 +9,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Outline
 import android.graphics.Rect
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
@@ -22,6 +20,7 @@ import android.view.MotionEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.VelocityTracker
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.Display
@@ -30,6 +29,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.RemoteViews
 import android.widget.TextView
 import android.widget.ImageView
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import hk.uwu.reareye.R
@@ -42,13 +42,12 @@ import hk.uwu.reareye.hook.utils.resolveHookPackageVersionCode
 import hk.uwu.reareye.hook.utils.resolveDexKitMethodInjectionPoint
 import org.luckypray.dexkit.annotations.DexKitExperimentalApi
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.charging.RearChargingHook
+import hk.uwu.reareye.hook.scopes.subscreencenter.modules.NativeRearAppLaunch
 import hk.uwu.reareye.ui.config.ConfigKeys
 import hk.uwu.roxyhook.PackageScope
 import hk.uwu.roxyhook.RoxyHooker
+import hk.uwu.roxyhook.android.lifecycle.lifecycle
 import org.json.JSONObject
-import org.json.JSONArray
-import java.io.File
-import java.util.zip.ZipFile
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -57,6 +56,8 @@ import kotlin.math.abs
 /** Uses SubscreenCenter's already-authorized listener, not a second notification listener. */
 @OptIn(DexKitExperimentalApi::class)
 class RearNotificationSyncHook : RoxyHooker() {
+    private var launchPrefs: hk.uwu.reareye.hook.support.HookPrefs?=null
+    private var preferencesSubscription:AutoCloseable?=null
     private val main = Handler(Looper.getMainLooper())
     private var listener: NotificationListenerService? = null
     private var enabled: () -> Boolean = { false }
@@ -65,19 +66,27 @@ class RearNotificationSyncHook : RoxyHooker() {
     private val active = LinkedHashMap<String, StatusBarNotification>()
     private val tokens = LinkedHashMap<String, String>()
     private val shown = LinkedHashSet<String>()
-    private data class RenderVersion(val postTime: Long, val redacted: Boolean)
+    private data class RenderVersion(val postTime: Long, val redacted: Boolean, val group: String)
     private val rendered = LinkedHashMap<String, RenderVersion>()
     private var receiverContext: Context? = null
     private var screenLocked = false
     private var visibleSourceKeys: Set<String>? = null
+    private var lastSyncSummary = ""
+    private var sourceGroups: Map<String, String> = emptyMap()
+    private var groupedSources: Map<String, List<StatusBarNotification>> = emptyMap()
+    private val expandedGroups = linkedSetOf<String>()
+    private val dismissing = linkedSetOf<String>()
+    private var rearInAod = false
+    private var aodChangedAt = 0L
+    private val groupReconciles = mutableMapOf<String, Runnable>()
     private var panelOwnsGesture = false
     private var continueOnFront: (StatusBarNotification) -> Boolean = { false }
     private val frontContinuations = linkedSetOf<String>()
-    private var flipIcon: Bitmap? = null
     private val rankingRefresh = Runnable { reconcile() }
     private val privacyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                RearNotificationGestures.cancelTap()
                 screenLocked = true
             }
             if (intent.action == Intent.ACTION_USER_PRESENT) {
@@ -91,23 +100,26 @@ class RearNotificationSyncHook : RoxyHooker() {
 
     override fun PackageScope.onHook() {
         loadApp("com.xiaomi.subscreencenter") {
+            launchPrefs=hookPrefs
             enabled = { hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false) }
             apps = { hookPrefs.getStringSet(ConfigKeys.REAR_NOTIFICATION_SYNC_APPS, emptySet()) }
             debugEnabled = { hookPrefs.getBoolean(ConfigKeys.MORE_DEBUG, false) }
             continueOnFront = { sbn ->
-                // Adapt a known detail flow, rather than treating every message
-                // as a front-screen handoff. Other applications are opt-in.
-                (sbn.packageName == "com.android.chrome" && sbn.notification.channelId == "downloads") ||
-                    sbn.packageName in hookPrefs.getStringSet(ConfigKeys.REAR_NOTIFICATION_FRONT_APPS, emptySet())
+                !NativeRearAppLaunch.canOpenNotification(sbn,launchPrefs?:hookPrefs,hookSystemContext)
+            }
+            preferencesSubscription=launchPrefs?.observe { key ->
+                if(key==null||key==ConfigKeys.ACTIVITIES_WHITELIST_APPS||key==ConfigKeys.REAR_APP_ENABLED)
+                    main.post { if(listener!=null) { rendered.clear();reconcile() } }
             }
             runCatching { installNativePanelBehavior() }.onFailure {
                 YLog.warn("Rear native panel behavior unavailable: ${it.javaClass.simpleName}")
             }
             YLog.info("[REAREye-NotificationSync] installed enabled=${enabled()} selectedApps=${apps().size}")
             RearNotificationCards.onReady = { main.post { reconcile() } }
-            RearNotificationCards.setVisibleSourceKeys = { keys -> main.post {
-                if (visibleSourceKeys != keys) {
+            RearNotificationCards.setVisibleSourceKeys = { keys, groups -> main.post {
+                if (visibleSourceKeys != keys || sourceGroups != groups) {
                     visibleSourceKeys = keys
+                    sourceGroups = groups
                     reconcile()
                 }
             } }
@@ -122,12 +134,12 @@ class RearNotificationSyncHook : RoxyHooker() {
                     val sbn = args.firstOrNull() as? StatusBarNotification ?: return@before
                     if (Looper.myLooper() == Looper.getMainLooper()) {
                         attach(host)
-                        active[sbn.key] = sbn
-                        if (publish(sbn, force = true)) RearChargingHook.notificationAvailable?.invoke()
+                        reconcile()
+                        if (sbn.key in shown) RearChargingHook.notificationAvailable?.invoke()
                     } else main.post {
                         attach(host)
-                        active[sbn.key] = sbn
-                        if (publish(sbn, force = true)) RearChargingHook.notificationAvailable?.invoke()
+                        reconcile()
+                        if (sbn.key in shown) RearChargingHook.notificationAvailable?.invoke()
                     }
                 }
                 after {
@@ -145,7 +157,10 @@ class RearNotificationSyncHook : RoxyHooker() {
                     val sbn = args.firstOrNull() as? StatusBarNotification ?: return@after
                     main.post {
                         // A late removal must not remove a newer replacement with the same key.
-                        if ((active[sbn.key]?.postTime ?: Long.MIN_VALUE) <= sbn.postTime) remove(sbn.key)
+                        if ((active[sbn.key]?.postTime ?: Long.MIN_VALUE) <= sbn.postTime) {
+                            remove(sbn.key)
+                            reconcile()
+                        }
                     }
                 }
             }
@@ -162,10 +177,35 @@ class RearNotificationSyncHook : RoxyHooker() {
                     }
                 }
             }
+            RemoteViews::class.java.resolve().firstMethod { name = "reapply"; parameterCount = 2 }.hook {
+                after {
+                    val view = args.getOrNull(1) as? View ?: return@after
+                    if (view.id == R.id.rear_notification_card) bindCard(view)
+                }
+            }
             View::class.java.resolve().firstMethod { name = "onAttachedToWindow"; parameterCount = 0 }.hook {
                 after {
                     val view = instance as? View ?: return@after
                     if (view.id == R.id.rear_notification_card) bindCard(view)
+                }
+            }
+            this.lifecycle {
+                onAttach(replay = true) {
+                    // Hot reload does not reconnect an already-bound NotificationListener.
+                    // Adopt the live service instead of waiting for the next notification.
+                    main.post {
+                        runCatching {
+                            val threadType = Class.forName("android.app.ActivityThread")
+                            val thread = threadType.getDeclaredMethod("currentActivityThread")
+                                .apply { isAccessible = true }.invoke(null)
+                            val services = threadType.getDeclaredField("mServices")
+                                .apply { isAccessible = true }.get(thread) as? Map<*, *>
+                            services?.values?.filterIsInstance<NotificationListenerService>()
+                                ?.firstOrNull { it.javaClass.name ==
+                                    "com.xiaomi.subscreencenter.smartassistant.SmartAssistantNotificationListenerService" }
+                                ?.let(::adopt)
+                        }.onFailure { YLog.warn("Live rear notification listener recovery unavailable", it) }
+                    }
                 }
             }
         }
@@ -178,6 +218,7 @@ class RearNotificationSyncHook : RoxyHooker() {
 
     private fun attach(host: NotificationListenerService) {
         listener = host
+        NativeRearMotion.hostLoader = host.classLoader
         if (receiverContext != null) return
         val ctx = host.applicationContext
         ctx.registerReceiver(privacyReceiver, IntentFilter().apply {
@@ -197,15 +238,36 @@ class RearNotificationSyncHook : RoxyHooker() {
         val host = listener ?: return
         val snapshot = runCatching { host.activeNotifications?.toList() }.getOrNull() ?: return
         val keys = snapshot.mapTo(HashSet()) { it.key }
+        snapshot.forEach { active[it.key] = it }
+        groupedSources = snapshot.filter(::sourceEligible).groupBy(::groupId)
+        expandedGroups.retainAll(groupedSources.keys)
         // Also discard restored mirror records that are outside the current
         // whitelist, even before this process has populated its `shown` set.
         RearNotificationCards.reconcile?.invoke(snapshot.filter(::eligible).mapTo(HashSet()) { it.key })
         (active.keys.toList() + shown.toList()).filterNot { it in keys }.distinct().forEach(::remove)
-        snapshot.forEach { active[it.key] = it; publish(it) }
+        snapshot.forEach { publish(it) }
+        val candidates = snapshot.filter(::eligible)
+        val summary = "source=${snapshot.size} visible=${visibleSourceKeys?.size} eligible=${candidates.size}" +
+            " native=${candidates.count { RearNotificationCards.hasNativeCard?.invoke(it.key) == true }}" +
+            " privateBlocked=${candidates.count { privacy(it) == null }} mirror=${shown.size}"
+        if (lastSyncSummary != summary) {
+            lastSyncSummary = summary
+            YLog.info("[REAREye-NotificationSync] $summary")
+        }
         if (debugEnabled()) YLog.debug("[REAREye-NotificationSync] reconciled sourceCount=${snapshot.size} mirrorCount=${shown.size} selectedApps=${apps().size} sourceUsers=${snapshot.groupingBy { it.uid / 100_000 }.eachCount()}")
     }
 
     private fun eligible(sbn: StatusBarNotification): Boolean {
+        if (!sourceEligible(sbn)) return false
+        val group = groupId(sbn)
+        val members = groupedSources[group].orEmpty()
+        return group in expandedGroups || members.maxWithOrNull(compareBy<StatusBarNotification> { it.postTime }.thenBy { it.key })?.key == sbn.key
+    }
+
+    private fun groupId(sbn: StatusBarNotification): String = sourceGroups[sbn.key]
+        ?: if (sbn.isGroup) sbn.groupKey else sbn.key
+
+    private fun sourceEligible(sbn: StatusBarNotification): Boolean {
         if (!enabled()) return false
         val selected = apps()
         if (sbn.packageName !in selected) return false
@@ -228,13 +290,8 @@ class RearNotificationSyncHook : RoxyHooker() {
         return business !in setOf("incall", "alarm", "countdown", "music")
     }
 
-    private fun publish(sbn: StatusBarNotification, force: Boolean = false): Boolean {
-        if (!eligible(sbn)) { hide(sbn.key); return false }
-        if (RearNotificationCards.hasNativeCard?.invoke(sbn.key) == true) {
-            hide(sbn.key)
-            return false
-        }
-        val host = listener ?: return false
+    private fun privacy(sbn: StatusBarNotification): Boolean? {
+        val host = listener ?: return null
         val locked = screenLocked || host.getSystemService(KeyguardManager::class.java).isKeyguardLocked
         val n = sbn.notification
         val ranking = NotificationListenerService.Ranking()
@@ -245,15 +302,32 @@ class RearNotificationSyncHook : RoxyHooker() {
         val visibility = if (override != -1000) override else n.visibility
         if ((hasRanking && ranking.isSuspended) || locked && (visibility == Notification.VISIBILITY_SECRET ||
                     Settings.Secure.getInt(host.contentResolver, "lock_screen_show_notifications", 1) == 0)) {
+            return null
+        }
+        val allowPrivate = Settings.Secure.getInt(host.contentResolver,
+            "lock_screen_allow_private_notifications", 0) != 0
+        return locked && visibility != Notification.VISIBILITY_PUBLIC &&
+            (override == Notification.VISIBILITY_PRIVATE || !allowPrivate)
+    }
+
+    private fun publish(sbn: StatusBarNotification, force: Boolean = false): Boolean {
+        if (sbn.key in dismissing) return false
+        if (!eligible(sbn)) { hide(sbn.key); return false }
+        if (RearNotificationCards.hasNativeCard?.invoke(sbn.key) == true) {
             hide(sbn.key)
             return false
         }
+        val host = listener ?: return false
+        val redacted = privacy(sbn) ?: run { hide(sbn.key); return false }
         val token = tokens.getOrPut(sbn.key) { UUID.randomUUID().toString() }
-        val allowPrivate = Settings.Secure.getInt(host.contentResolver,
-            "lock_screen_allow_private_notifications", 0) != 0
-        val redacted = locked && visibility != Notification.VISIBILITY_PUBLIC &&
-            (override == Notification.VISIBILITY_PRIVATE || !allowPrivate)
-        val version = RenderVersion(sbn.postTime, redacted)
+        // Progress/ranking refreshes must not restart a settled handoff cue.
+        // Keep recording the latest source in `active`; returning to the card
+        // publishes that fresh content. Privacy changes still rebuild the view.
+        if (!force && sbn.key in frontContinuations && rendered[sbn.key]?.redacted == redacted &&
+            sbn.key in shown && RearNotificationCards.hasMirrorCard?.invoke(sbn.key) == true) return true
+        val group = groupId(sbn)
+        val version = RenderVersion(sbn.postTime, redacted,
+            "${group in expandedGroups}:" + groupedSources[group].orEmpty().joinToString { "${it.key}:${it.postTime}" })
         if (!force && rendered[sbn.key] == version && sbn.key in shown &&
             RearNotificationCards.hasMirrorCard?.invoke(sbn.key) == true) return true
         return runCatching {
@@ -275,9 +349,11 @@ class RearNotificationSyncHook : RoxyHooker() {
         return RemoteViews("hk.uwu.reareye", R.layout.rear_notification_card).apply {
             setTextViewText(R.id.rear_notification_token, token)
             setTextViewText(R.id.rear_notification_redacted, if (redacted) "1" else "0")
+            listOf(R.id.rear_notification_footer, R.id.rear_notification_progress,
+                R.id.rear_notification_subtext, R.id.rear_notification_chronometer,
+                R.id.rear_notification_actions, R.id.rear_notification_action_one,
+                R.id.rear_notification_action_two).forEach { setViewVisibility(it, View.GONE) }
             if (!redacted) {
-                n.contentIntent?.takeUnless { it.isActivity && continueOnFront(sbn) }
-                    ?.let { setOnClickPendingIntent(R.id.rear_notification_card, it) }
                 val maximum = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
                 val indeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
                 val hasProgress = maximum > 0 || indeterminate
@@ -310,7 +386,7 @@ class RearNotificationSyncHook : RoxyHooker() {
         }
     }
 
-    private fun populateNativeContent(view: View, sbn: StatusBarNotification, redacted: Boolean) {
+    private fun populateNativeContent(view: View, sbn: StatusBarNotification, redacted: Boolean, animateContent: Boolean = false) {
         val host = listener ?: return
         val context = host.createDisplayContext(view.display)
         val nativeHost = view.findViewById<ViewGroup>(R.id.rear_notification_native_host) ?: return
@@ -324,6 +400,8 @@ class RearNotificationSyncHook : RoxyHooker() {
         val nativeRoot = LayoutInflater.from(context).inflate(hostId("notification_panel", "layout"), nativeHost, false)
         val n = sbn.notification
         val extras = n.extras
+        val group = groupId(sbn)
+        val members = groupedSources[group].orEmpty()
         val app = runCatching {
             context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(sbn.packageName, 0)).toString()
         }.getOrDefault(sbn.packageName)
@@ -344,6 +422,7 @@ class RearNotificationSyncHook : RoxyHooker() {
             ?: n.smallIcon?.loadDrawable(context)
         val avatar = if (redacted) null else n.getLargeIcon()?.loadDrawable(context)
         nativeRoot.findViewById<ImageView>(hostId("notification_icon")).apply {
+            NativeRearAppLaunch.registerNotificationOrigin(view,this)
             setImageDrawable(avatar ?: appIcon)
             if (avatar != null) {
                 val radius = context.resources.getDimension(hostId("notification_large_icon_radius", "dimen"))
@@ -369,12 +448,18 @@ class RearNotificationSyncHook : RoxyHooker() {
             it.layoutParams = it.layoutParams.apply { width = cameraWidth }
         }
         val margin = context.resources.getDimensionPixelSize(hostId("notification_container_margin_horizontal", "dimen"))
+        // Visibility includes our group toggle after an earlier bind. Derive the
+        // layout from notification data so rebinding cannot change its geometry.
+        val hasTaskControls = !redacted && (
+            extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0) > 0 ||
+                extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false) ||
+                extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false) && n.`when` > 0L ||
+                n.actions.orEmpty().any { it.actionIntent != null && it.remoteInputs.isNullOrEmpty() })
         view.findViewById<View>(R.id.rear_notification_footer)?.let {
             it.setPadding(cameraWidth + margin, it.paddingTop, margin, it.paddingBottom)
-            if (it.visibility == View.VISIBLE) {
-                // Task notifications need space for live progress and actions.
-                // The footer is measured separately; compact only the content
-                // above it, leaving ordinary QQ/WeChat cards at stock sizes.
+            if (hasTaskControls) {
+                // Keep the native notification layout; compact only task cards
+                // that have actual progress or action controls.
                 fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
                 val icon = nativeRoot.findViewById<ImageView>(hostId("notification_icon"))
                 icon.apply {
@@ -423,23 +508,68 @@ class RearNotificationSyncHook : RoxyHooker() {
         }
         nativeRoot.setOnClickListener { view.performClick() }
         nativeRoot.findViewById<View>(hostId("notification_container")).setOnClickListener { view.performClick() }
+        nativeHost.layoutParams = (nativeHost.layoutParams as LinearLayout.LayoutParams).apply { height = 0; weight = 1f }
         nativeHost.removeAllViews()
         nativeHost.addView(nativeRoot)
+        val footer = view.findViewById<LinearLayout>(R.id.rear_notification_footer)
+        footer.visibility = if (hasTaskControls || members.size > 1) View.VISIBLE else View.GONE
+        footer.findViewWithTag<View>("rear_notification_group_toggle")?.let { footer.removeView(it) }
+        if (members.size > 1) {
+            footer.visibility = View.VISIBLE
+            val toggle = NativeGroupToggle(context, members.size, group in expandedGroups)
+            toggle.setOnClickListener {
+                if (NativeRearMotion.isFlipping(view)) return@setOnClickListener
+                val expanded = if (expandedGroups.remove(group)) false else { expandedGroups.add(group); true }
+                toggle.setExpanded(expanded)
+                groupReconciles.remove(group)?.let(main::removeCallbacks)
+                val job = Runnable {
+                    groupReconciles.remove(group)
+                    // Registry updates reapply content themselves. Rebuilding a
+                    // retained root again here interrupts the label transition.
+                    reconcile()
+                    if (view.isAttachedToWindow)
+                        view.findViewWithTag<NativeGroupToggle>("rear_notification_group_toggle")
+                            ?.setExpanded(group in expandedGroups)
+                }
+                groupReconciles[group] = job
+                main.postDelayed(job, if (android.animation.ValueAnimator.areAnimatorsEnabled()) 220L else 0L)
+            }
+            footer.addView(toggle, LinearLayout.LayoutParams(-1, (36 * context.resources.displayMetrics.density).toInt()))
+        }
+
         // SmartAssistantPanel owns the stock background and wake/AOD transitions.
         // Keep mirror content transparent; do not add nested blur or blend layers.
     }
 
     private fun PackageScope.installNativePanelBehavior() {
+        View::class.java.resolve().firstMethod { name = "setBackgroundColor"; parameterCount = 1 }.hook {
+            before {
+                if (!enabled() || !hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_GLASS, true)) return@before
+                val view = instance as? View ?: return@before
+                val colorId = view.resources.getIdentifier("assistant_container_background_color", "color", "com.xiaomi.subscreencenter")
+                if (colorId == 0 || args[0] != view.context.getColor(colorId)) return@before
+                var node: View? = view
+                var inPanel = false
+                repeat(8) {
+                    if (node?.javaClass?.name == "com.xiaomi.subscreencenter.SmartAssistantPanel") inPanel = true
+                    node = node?.parent as? View
+                }
+                if (inPanel) args[0] = 0x44505C70
+            }
+        }
         val launcherClass = "com.xiaomi.subscreencenter.SubScreenLauncher".toClass()
         launcherClass.resolve().firstMethod { name = "dispatchTouchEvent"; parameterCount = 1 }.hook {
             before {
                 val event = args.firstOrNull() as? MotionEvent ?: return@before
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                     val activity = instance as? android.app.Activity ?: return@before
+                    NativeRearReply.activity = java.lang.ref.WeakReference(activity)
                     val containerId = activity.resources.getIdentifier("assistant_container", "id", activity.packageName)
                     val container = activity.findViewById<View>(containerId)
                     panelOwnsGesture = enabled() && container?.isShown == true && container.getGlobalVisibleRect(Rect())
                 }
+                val activity = instance as? android.app.Activity ?: return@before
+                if (enabled() && RearNotificationGestures.dispatch(activity, event)) result = true
             }
         }
         val bridge = runtime.manage(createDexKitCacheBridge(
@@ -448,6 +578,28 @@ class RearNotificationSyncHook : RoxyHooker() {
             sourceDir = hookAppInfo.sourceDir,
             dataDir = hookAppInfo.dataDir,
         ))
+        runCatching {
+            val point = requireNotNull(resolveDexKitMethodInjectionPoint(bridge, "SSC_NOTIFICATION_NATIVE_DOUBLE_TAP") {
+                findMethod { matcher { paramTypes("android.view.MotionEvent"); returnType = "void";
+                    usingStrings("onGesturePerformed: double click subscreen go to sleep") } }.singleOrNull()
+            })
+            val type = point.className.toClass()
+            val method = type.getDeclaredMethod(point.methodName, MotionEvent::class.java).apply { isAccessible = true }
+            type.resolve().firstMethod { name = point.methodName; parameterCount = 1 }.hook {
+                before {
+                    val event = args.firstOrNull() as? MotionEvent ?: return@before
+                    if (enabled() && RearNotificationGestures.suppressNativeDoubleTap && event.actionMasked != MotionEvent.ACTION_CANCEL) {
+                        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                            try { method.invoke(instance, cancel) } finally { cancel.recycle() }
+                        }
+                        // Explicit footer controls behave as controls; rapid label
+                        // reversals must not become the page's sleep gesture.
+                        result = null
+                    }
+                }
+            }
+        }.onFailure { YLog.warn("Native notification control gesture unavailable: ${it.javaClass.simpleName}") }
         runCatching {
             val update = requireNotNull(resolveDexKitMethodInjectionPoint(bridge, "SSC_MIRROR_AOD_NATIVE_UPDATE") {
                 findMethod { matcher { paramTypes("boolean"); returnType = "void";
@@ -461,18 +613,43 @@ class RearNotificationSyncHook : RoxyHooker() {
                     it.parameterTypes.contentEquals(arrayOf(Boolean::class.javaPrimitiveType))
             }
             val payload = widgetClass.fields.single { it.type == android.os.Bundle::class.java }
+            val createView = widgetClass.declaredMethods.single {
+                it.parameterTypes.contentEquals(arrayOf(Context::class.java)) && it.returnType == View::class.java
+            }
+            widgetClass.resolve().firstMethod { name = createView.name; parameterCount = 1 }.hook {
+                after {
+                    val widget = instance ?: return@after
+                    if ((payload.get(widget) as? android.os.Bundle)?.getString("business") != RearNotificationCards.BUSINESS) return@after
+                    (result as? View)?.let { NativeRearCardHost.register(widget, it) }
+                }
+            }
+            widgetClass.resolve().firstMethod { name = "c"; parameterCount = 0 }.hook {
+                after {
+                    val widget = instance ?: return@after
+                    if (enabled() && (payload.get(widget) as? android.os.Bundle)?.getString("business") == RearNotificationCards.BUSINESS)
+                        result = true
+                }
+            }
+            val contentField = widgetClass.declaredFields.single { it.type == View::class.java }
+                .apply { isAccessible = true }
             widgetClass.resolve().firstMethod { name = aodChanged.name; parameterCount = 1 }.hook {
                 before {
+                    if (!enabled()) return@before
                     val widget = instance ?: return@before
                     val bundle = payload.get(widget) as? android.os.Bundle ?: return@before
                     if (bundle.getString("business") != RearNotificationCards.BUSINESS) return@before
-                    // Use the native initial/update path without stacking an
-                    // identical second text layer during the system power fade.
-                    replace.invoke(widget, false)
+                    rearInAod = args[0] as Boolean
+                    aodChangedAt = SystemClock.uptimeMillis()
+                    // Retain the existing root, including a visible handoff face.
+                    // The stock RemoteViews AOD path adds a duplicate text layer.
+                    val root = contentField.get(widget) as? ViewGroup
+                    if (root?.id == R.id.rear_notification_card) {
+                        root.getChildAt(2)?.let { NativeRearMotion.aod(it, rearInAod, true) }
+                    } else replace.invoke(widget, false)
                     result = null
                 }
             }
-            YLog.info("[REAREye-NotificationSync] native AOD single-view update installed")
+            YLog.info("[REAREye-NotificationSync] native AOD content transition installed")
         }.onFailure { YLog.warn("Native rear AOD update unavailable: ${it.javaClass.simpleName}") }
         runCatching {
             val point = requireNotNull(resolveDexKitMethodInjectionPoint(bridge, "SSC_CAMERA_GESTURE_PRECHECK") {
@@ -488,52 +665,13 @@ class RearNotificationSyncHook : RoxyHooker() {
 
     private fun showFrontContinuation(view: View) {
         val host = view.findViewById<ViewGroup>(R.id.rear_notification_native_host) ?: return
-        val context = view.context
-        fun dp(n: Int) = (n * context.resources.displayMetrics.density).toInt()
-        val prompt = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding((view.display?.cutout?.safeInsetLeft ?: 0) + dp(30), 0, dp(30), 0)
-        }
-        val image = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            loadNativeFlipIcon()?.let(::setImageBitmap)
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        prompt.addView(image, LinearLayout.LayoutParams(dp(32), dp(32)).apply { bottomMargin = dp(24) })
-        prompt.addView(TextView(context).apply {
-            text = "请翻转手机，到主屏继续使用"
-            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, dp(16).toFloat())
-            setTextColor(0xF2FFFFFF.toInt())
-            gravity = Gravity.CENTER
-            maxLines = 2
-            setLineHeight(dp(22))
-        }, LinearLayout.LayoutParams(-1, -2))
-        prompt.setOnClickListener { view.performClick() }
-        host.removeAllViews()
-        host.addView(prompt, ViewGroup.LayoutParams(-1, -1))
-        view.findViewById<View>(R.id.rear_notification_footer)?.visibility = View.GONE
-    }
-
-    private fun loadNativeFlipIcon(): Bitmap? {
-        flipIcon?.let { return it }
-        return runCatching {
-            val root = "/data/system/theme_magic/users/${Process.myUid() / 100_000}"
-            val config = File("$root/subscreencenter/config/appInfo.json")
-            require(config.length() in 1..2_000_000L)
-            val entries = JSONArray(config.readText())
-            val archive = (0 until entries.length()).asSequence().map { entries.getJSONObject(it) }
-                .first { it.optString("bindApp") == "com.xiaomi.smarthome" }.getString("mtzPath")
-            val path = File(archive).canonicalPath
-            require(path.startsWith("$root/back_screen_card/") || path.startsWith("/system/media/rearscreen/"))
-            ZipFile(path).use { zip ->
-                val entry = requireNotNull(zip.getEntry("assets/flip_icon.png"))
-                require(entry.size in 1..256_000L)
-                val bytes = zip.getInputStream(entry).use { it.readNBytes(256_001) }
-                require(bytes.size <= 256_000)
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also { flipIcon = it }
-            }
-        }.onFailure { YLog.warn("Native flip icon unavailable: ${it.javaClass.simpleName}") }.getOrNull()
+        val context = listener?.createDisplayContext(view.display) ?: return
+        runCatching {
+            host.layoutParams = (host.layoutParams as LinearLayout.LayoutParams).apply { height = 0; weight = 1f }
+            val prompt = NativeRearContinuation.create(context, "请翻转手机\n到主屏继续使用")
+            prompt.setOnClickListener { view.performClick() }
+            NativeRearContinuation.show(host, prompt, view.findViewById(R.id.rear_notification_footer), view)
+        }.onFailure { YLog.warn("Native front continuation unavailable: ${it.javaClass.simpleName}") }
     }
 
     private fun focusText(notification: Notification, names: List<String>): String? = runCatching {
@@ -555,7 +693,7 @@ class RearNotificationSyncHook : RoxyHooker() {
         null
     }.getOrNull()
 
-    private fun bindCard(view: View) {
+    private fun bindCard(view: View, animateContent: Boolean = false) {
         // Camera spacing belongs to the stock notification layout. Changing this
         // outer padding during page translation/scaling causes text/icon jumps.
         view.setPadding(0, 0, 0, 0)
@@ -563,87 +701,78 @@ class RearNotificationSyncHook : RoxyHooker() {
         val key = tokens.entries.firstOrNull { it.value == token }?.key ?: return
         val sbn = active[key] ?: return
         val redacted = view.findViewById<TextView>(R.id.rear_notification_redacted)?.text?.toString() == "1"
-        runCatching { populateNativeContent(view, sbn, redacted) }.onFailure {
+        if (redacted) view.setOnClickListener(null)
+        runCatching { populateNativeContent(view, sbn, redacted, animateContent) }.onFailure {
             YLog.warn("Native rear notification layout unavailable: ${it.javaClass.simpleName}")
             main.post { hide(key) }
             return
         }
-        if (!redacted && sbn.notification.contentIntent?.isActivity == true && continueOnFront(sbn)) {
+        if (!redacted) {
             view.isClickable = true
             view.setOnClickListener {
-                if (key in frontContinuations) {
-                    frontContinuations.remove(key)
-                    active[key]?.let { publish(it, force = true) }
-                } else runCatching {
-                    val options = ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
-                    sbn.notification.contentIntent.send(view.context, 0, null, null, null, null, options)
-                    frontContinuations.add(key)
-                    showFrontContinuation(view)
-                }.onFailure { YLog.warn("Front notification open unavailable: ${it.javaClass.simpleName}") }
+                RearNotificationGestures.singleTap(view) {
+                    if (active[key]?.postTime != sbn.postTime || privacy(active[key] ?: return@singleTap) != false) return@singleTap
+                    if (NativeRearMotion.isFlipping(view)) return@singleTap
+                    if(!continueOnFront(sbn)) {
+                        runCatching { NativeRearAppLaunch.openNotification(view,sbn,launchPrefs?:return@singleTap) }
+                            .onFailure { YLog.warn("Native rear notification launch failed",it) }
+                        return@singleTap
+                    }
+                    if (key in frontContinuations || view.findViewWithTag<View>(NativeRearContinuation.VIEW_TAG) != null) {
+                        NativeRearMotion.flip(view, returning = true) {
+                            frontContinuations.remove(key)
+                            val current = active[key]
+                            val host = listener
+                            val currentRedacted = rendered[key]?.redacted
+                            if (current != null && host != null && currentRedacted != null) {
+                                buildViews(host, current, token, currentRedacted).reapply(view.context, view)
+                            }
+                        }
+                    } else runCatching {
+                        val options = ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
+                        sbn.notification.contentIntent?.send(view.context, 0, null, null, null, null, options)
+                        frontContinuations.add(key)
+                        showFrontContinuation(view)
+                    }.onFailure { YLog.warn("Front notification open unavailable: ${it.javaClass.simpleName}") }
+                }
             }
             if (key in frontContinuations) showFrontContinuation(view)
         }
-        if (!sbn.isClearable) return
-        view.isClickable = true
-        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
-            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
-                super.onInitializeAccessibilityNodeInfo(host, info)
-                info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_DISMISS)
-            }
-            override fun performAccessibilityAction(host: View, action: Int, arguments: android.os.Bundle?): Boolean {
-                if (action == AccessibilityNodeInfo.ACTION_DISMISS) { dismissSource(key); return true }
-                return super.performAccessibilityAction(host, action, arguments)
-            }
+        val content = (view as? ViewGroup)?.getChildAt(2)
+        if (content != null) {
+            val now = SystemClock.uptimeMillis()
+            if (now - aodChangedAt < 1600L) {
+                NativeRearMotion.aod(content, !rearInAod, false)
+                NativeRearMotion.aod(content, rearInAod, true)
+            } else NativeRearMotion.aod(content, rearInAod, false)
         }
-        var startX = 0f
-        var startY = 0f
-        var dragging = false
-        val slop = ViewConfiguration.get(view.context).scaledTouchSlop
-        val touch = View.OnTouchListener { v, event ->
-            val dx = event.rawX - startX
-            val dy = event.rawY - startY
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { startX = event.rawX; startY = event.rawY; dragging = false; false }
-                MotionEvent.ACTION_MOVE -> {
-                    if (!dragging && abs(dx) > slop * 2 && abs(dx) > abs(dy) * 1.5f) {
-                        dragging = true
-                        v.parent?.requestDisallowInterceptTouchEvent(true)
-                    }
-                    if (dragging) {
-                        v.translationX = dx
-                        v.alpha = (1f - abs(dx) / v.width.coerceAtLeast(1)).coerceIn(0.5f, 1f)
-                    }
-                    dragging
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val consumed = dragging
-                    if (dragging && event.actionMasked == MotionEvent.ACTION_UP && abs(dx) > v.width * 0.32f) dismissSource(key)
-                    dragging = false
-                    v.animate().translationX(0f).alpha(1f).setDuration(150L).start()
-                    v.parent?.requestDisallowInterceptTouchEvent(false)
-                    consumed
-                }
-                else -> false
-            }
-        }
-        view.setOnTouchListener(touch)
-        val nativeRoot = view.findViewById<ViewGroup>(R.id.rear_notification_native_host)?.getChildAt(0)
-        nativeRoot?.setOnTouchListener(touch)
-        val containerId = nativeRoot?.resources?.getIdentifier("notification_container", "id", "com.xiaomi.subscreencenter") ?: 0
-        nativeRoot?.findViewById<View>(containerId)?.setOnTouchListener(touch)
+        RearNotificationGestures.register(view, sbn.isClearable) { dismissSource(key, sbn.postTime) }
     }
 
-    private fun dismissSource(key: String) {
-        val host = listener ?: return
-        if (!enabled()) return
+    private fun dismissSource(key: String, expectedPostTime: Long): Boolean {
+        val host = listener ?: return false
+        if (!enabled()) return false
         // Resolve against NMS again: never cancel a non-clearable or already-replaced entry.
-        val current = runCatching { host.getActiveNotifications(arrayOf(key))?.singleOrNull() }.getOrNull() ?: return
-        if (!current.isClearable || !eligible(current)) return
-        runCatching { host.cancelNotification(key) }.onFailure {
+        val snapshot = runCatching { host.activeNotifications?.toList() }.getOrNull() ?: return false
+        val current = snapshot.singleOrNull { it.key == key } ?: return false
+        if (current.postTime != expectedPostTime || !current.isClearable || !eligible(current)) return false
+        val group = groupId(current)
+        val targets = if (group !in expandedGroups && groupedSources[group].orEmpty().size > 1)
+            snapshot.filter { groupId(it) == group && it.isClearable &&
+                (sourceEligible(it) || (it.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) }
+        else listOf(current)
+        val targetKeys = targets.map { it.key }
+        dismissing.addAll(targetKeys)
+        val accepted = runCatching { host.cancelNotifications(targetKeys.toTypedArray()); true }.onFailure {
             YLog.warn("Rear notification dismissal rejected: ${it.javaClass.simpleName}")
-        }
+        }.getOrDefault(false)
         // NMS removal is authoritative. If cancellation was refused, retain the rear card.
-        main.postDelayed({ reconcile() }, 250L)
+        main.postDelayed({
+            dismissing.removeAll(targetKeys.toSet())
+            targetKeys.forEach { rendered.remove(it) }
+            reconcile()
+        }, 600L)
+        return accepted
     }
 
     private fun hide(key: String) {
@@ -653,21 +782,27 @@ class RearNotificationSyncHook : RoxyHooker() {
     }
 
     private fun remove(key: String) { hide(key); active.remove(key); tokens.remove(key) }
-    private fun clear() { shown.toList().forEach(::hide); active.clear(); tokens.clear() }
+    private fun clear() {
+        shown.toList().forEach(::hide); active.clear(); tokens.clear()
+        groupedSources = emptyMap(); expandedGroups.clear(); dismissing.clear()
+        groupReconciles.values.forEach(main::removeCallbacks); groupReconciles.clear()
+        RearNotificationGestures.cancelTap()
+    }
 
     override fun onHotReloadQuiesce() {
         val done = CountDownLatch(1)
         val cleanup = Runnable {
             try {
+                preferencesSubscription?.close();preferencesSubscription=null
                 main.removeCallbacksAndMessages(null)
                 clear()
-                flipIcon = null
                 receiverContext?.unregisterReceiver(privacyReceiver)
                 receiverContext = null
                 listener = null
                 RearNotificationCards.onReady = null
                 RearNotificationCards.setVisibleSourceKeys = null
                 visibleSourceKeys = null
+                sourceGroups = emptyMap()
                 continueOnFront = { false }
                 panelOwnsGesture = false
             } finally { done.countDown() }

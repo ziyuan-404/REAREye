@@ -7,6 +7,9 @@ import hk.uwu.reareye.hook.scopes.subscreencenter.modules.MusicControlWhitelistM
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.PersonalAssistantBackScreenDeviceHook
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.RearWallpaperHook
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.RearScreenTimeoutHook
+import hk.uwu.reareye.hook.scopes.subscreencenter.modules.RearAppHomeHook
+import hk.uwu.reareye.hook.scopes.subscreencenter.modules.RearAppCatalogHook
+import hk.uwu.reareye.hook.scopes.subscreencenter.modules.RearAppFaceAuthHook
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.SubScreenBackHomeWhitelistModule
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.UnlimitedSubscreenAppListHook
 import hk.uwu.reareye.hook.scopes.subscreencenter.modules.VideoLoopModule
@@ -48,6 +51,9 @@ class SubscreenCenterScope : RoxyHooker(), Scope {
             RearNotificationSyncHook(),
             RearChargingHook(),
             RearScreenTimeoutHook(),
+            RearAppHomeHook(),
+            RearAppFaceAuthHook(),
+            RearAppCatalogHook(),
             RearAppHook(),
             SystemUiNotificationBridgeHook(),
             SystemUiActivityHostHook(),

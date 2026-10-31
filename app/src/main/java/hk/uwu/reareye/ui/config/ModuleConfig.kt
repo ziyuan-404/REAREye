@@ -21,6 +21,18 @@ object ConfigKeys {
 
     const val HOOK_ACTIVITIES_WHITELIST = "enable_activities_whitelist_hook"
     const val ACTIVITIES_WHITELIST_APPS = "activities_whitelist_apps"
+    const val REAR_APP_ENABLED = "rear_app_enabled"
+    const val REAR_APP_DPI = "rear_app_dpi"
+    const val REAR_APP_KEYBOARD = "rear_app_keyboard"
+    const val REAR_APP_FACE_AUTH = "rear_app_face_auth"
+    const val REAR_APP_GESTURES = "rear_app_gestures"
+    const val REAR_APP_HOME_STYLE = "rear_app_home_style"
+    const val REAR_APP_ORDER_MODE = "rear_app_order_mode"
+    const val REAR_APP_ORDER_DATA = "rear_app_order_data"
+    const val CFG_REAR_APP_DISPLAY = "cfg_rear_app_display"
+    const val REAR_APP_REGION = "rear_app_region"
+    const val REAR_APP_ROUNDED = "rear_app_rounded"
+    const val REAR_APP_CORNER_RADIUS = "rear_app_corner_radius"
     const val ALLOW_ALL_ACTIVITIES = "allow_all_activities"
     const val ALLOW_EXTERNAL_DISPLAY_LAUNCH = "allow_external_display_launch"
     const val HOOK_SKIP_LOCK_BACK_HOME = "enable_skip_lock_back_home"
@@ -54,6 +66,7 @@ object ConfigKeys {
     const val REAR_WIDGET_BUSINESS_EXTRA_CONFIG_DATA = "rear_widget_business_extra_config_data"
     const val HOOK_ALLOW_REAR_FOCUS_NOTICES = "enable_allow_rear_focus_notices"
     const val REAR_NOTIFICATION_SYNC = "rear_notification_sync"
+    const val REAR_NOTIFICATION_GLASS = "rear_notification_glass"
     const val REAR_NOTIFICATION_SYNC_APPS = "rear_notification_sync_apps"
     const val REAR_NOTIFICATION_FRONT_APPS = "rear_notification_front_apps"
     const val REAR_LIQUID_CHARGING = "rear_liquid_charging"
@@ -322,6 +335,73 @@ val REAREyeConfig = listOf(
         titleRes = R.string.category_system,
         children = listOf(
             ConfigCategory(
+                titleRes = R.string.rear_app_settings_title,
+                descriptionRes = R.string.rear_app_settings_desc,
+                children = listOf(
+                    ConfigItem(
+                        key = ConfigKeys.CFG_REAR_APP_DISPLAY,
+                        titleRes = R.string.rear_app_display_title,
+                        descriptionRes = R.string.rear_app_display_desc,
+                        type = ConfigType.Manager(ConfigType.ManagerType.REAR_APP_DISPLAY),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_APP_ENABLED,
+                        titleRes = R.string.rear_app_enabled,
+                        descriptionRes = R.string.rear_app_enabled_desc,
+                        type = ConfigType.BooleanVal(defaultValue = false),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_APP_DPI,
+                        titleRes = R.string.rear_app_dpi,
+                        descriptionRes = R.string.rear_app_dpi_desc,
+                        type = ConfigType.DensityDpi(defaultValue = RearAppDefaults.APP_DPI),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_APP_KEYBOARD,
+                        titleRes = R.string.rear_app_keyboard,
+                        descriptionRes = R.string.rear_app_keyboard_desc,
+                        type = ConfigType.BooleanVal(defaultValue = true),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_APP_FACE_AUTH,
+                        titleRes = R.string.rear_app_face_auth,
+                        descriptionRes = R.string.rear_app_face_auth_desc,
+                        type = ConfigType.BooleanVal(defaultValue = false),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_APP_GESTURES,
+                        titleRes = R.string.rear_app_gestures,
+                        descriptionRes = R.string.rear_app_gestures_desc,
+                        type = ConfigType.BooleanVal(defaultValue = true),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_APP_HOME_STYLE,
+                        titleRes = R.string.rear_app_home_style,
+                        descriptionRes = R.string.rear_app_home_style_desc,
+                        type = ConfigType.EnumSingleSelect(
+                            defaultValue = 0,
+                            options = listOf(
+                                ConfigType.EnumOption(R.string.rear_app_home_stock, 0),
+                                ConfigType.EnumOption(R.string.rear_app_home_grid, 1),
+                            ),
+                        ),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_APP_ORDER_MODE,
+                        titleRes = R.string.rear_app_order_mode,
+                        descriptionRes = R.string.rear_app_order_mode_desc,
+                        type = ConfigType.EnumSingleSelect(
+                            defaultValue = 0,
+                            options = listOf(
+                                ConfigType.EnumOption(R.string.rear_app_order_selection, 0),
+                                ConfigType.EnumOption(R.string.rear_app_order_name, 1),
+                                ConfigType.EnumOption(R.string.rear_app_order_package, 2),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            ConfigCategory(
                 titleRes = R.string.cfg_activities_whitelist,
                 descriptionRes = R.string.cfg_activities_whitelist_desc,
                 children = listOf(
@@ -463,6 +543,12 @@ val REAREyeConfig = listOf(
                         titleRes = R.string.rear_notification_sync,
                         descriptionRes = R.string.rear_notification_sync_desc,
                         type = ConfigType.BooleanVal(defaultValue = false),
+                    ),
+                    ConfigItem(
+                        key = ConfigKeys.REAR_NOTIFICATION_GLASS,
+                        titleRes = R.string.rear_notification_glass,
+                        descriptionRes = R.string.rear_notification_glass_desc,
+                        type = ConfigType.BooleanVal(defaultValue = true),
                     ),
                     ConfigItem(
                         key = ConfigKeys.REAR_SCREEN_TIMEOUT_SECONDS,

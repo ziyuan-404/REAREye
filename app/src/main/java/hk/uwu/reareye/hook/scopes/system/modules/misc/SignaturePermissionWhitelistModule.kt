@@ -65,7 +65,7 @@ class SignaturePermissionWhitelistModule : RoxyHooker() {
                     if (!isAllowedUid(scope, uid)) return@before
                     if (!shouldForceGrant(scope, permission)) return@before
                     result = PackageManager.PERMISSION_GRANTED
-                    YLog.debug("Granted signature permission $permission to uid=$uid")
+                    if(scope.hookPrefs.getBoolean(ConfigKeys.MORE_DEBUG,false))YLog.debug("Granted signature permission $permission to uid=$uid")
                 }
             }
 
@@ -80,7 +80,7 @@ class SignaturePermissionWhitelistModule : RoxyHooker() {
                     if (packageName !in WhitelistedCallers.PACKAGES) return@before
                     if (!shouldForceGrant(scope, permission)) return@before
                     result = PackageManager.PERMISSION_GRANTED
-                    YLog.debug("Granted signature permission $permission to $packageName")
+                    if(scope.hookPrefs.getBoolean(ConfigKeys.MORE_DEBUG,false))YLog.debug("Granted signature permission $permission to $packageName")
                 }
             }
         }

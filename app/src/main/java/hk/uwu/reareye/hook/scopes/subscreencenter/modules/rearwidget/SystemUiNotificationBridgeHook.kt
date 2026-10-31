@@ -20,12 +20,14 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
     companion object {
         private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
         private const val TAG = "REAREye-NotifBridge"
+        private const val SNAPSHOT = "hk.uwu.reareye.visible-notification-keys"
     }
 
     private val activeSnapshots = ConcurrentHashMap<String, NotificationRouteSnapshot>()
     private val routeClient = NotificationRouteBridgeClient()
     private val main = Handler(Looper.getMainLooper())
     private var visibleKeys: Set<String>? = null
+    private var visibleGroups: Map<String, String> = emptyMap()
     private var syncEnabled: () -> Boolean = { false }
     private val visibilityHeartbeat = object : Runnable {
         override fun run() {
@@ -45,6 +47,7 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
         activeSnapshots.clear()
         main.removeCallbacks(visibilityHeartbeat)
         visibleKeys = null
+        visibleGroups = emptyMap()
         syncEnabled = { false }
         hostContext = null
     }
@@ -52,6 +55,13 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
     override fun PackageScope.onHook() {
         loadApp(SYSTEM_UI_PACKAGE) {
             syncEnabled = { hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false) }
+            // Bundle/String survive replacement of the module classloader. Without
+            // this, a reload clears every rear card until ShadeListBuilder runs again.
+            (System.getProperties()[SNAPSHOT] as? Bundle)?.let { saved ->
+                visibleKeys = saved.getStringArrayList("keys")?.toSet()
+                val groups = saved.getStringArrayList("groups").orEmpty()
+                visibleGroups = saved.getStringArrayList("keys").orEmpty().zip(groups).toMap()
+            }
             debugLog("loadApp process=$processName package=$packageName")
 
             this.lifecycle {
@@ -77,15 +87,23 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
                                 val entries = instance!!.asResolver().firstField { name = "mReadOnlyNotifList" }.get<List<*>>()
                                     ?: return@runCatching
                                 val keys = linkedSetOf<String>()
-                                fun collect(entry: Any?, depth: Int) {
+                                val groups = linkedMapOf<String, String>()
+                                fun collect(entry: Any?, depth: Int, parent: String? = null, keyguardOnly: Boolean = false) {
                                     if (entry == null || depth > 8) return
+                                    var group = parent
                                     val representative = entry.javaClass.methods.firstOrNull {
                                         it.name == "getRepresentativeEntry" && it.parameterCount == 0
                                     }?.invoke(entry)
                                     if (representative != null) {
                                         val field = representative.javaClass.getField("mSbn")
                                         val sbn = field.get(representative) as? StatusBarNotification
-                                        if (sbn != null) keys.add(sbn.key)
+                                        if (sbn != null) {
+                                            keys.add(sbn.key)
+                                            if (group == null) group = if (keyguardOnly && sbn.isGroup) sbn.groupKey else sbn.key
+                                            // Keyguard recency filtering is a visibility fallback,
+                                            // not permission to flatten a group already built by the shade.
+                                            if (!keyguardOnly || sbn.key !in groups) groups[sbn.key] = group!!
+                                        }
                                     }
                                     // Group children survive summary filtering; walk those too.
                                     val children = (entry.javaClass.methods.firstOrNull {
@@ -93,7 +111,7 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
                                     }?.invoke(entry) ?: entry.javaClass.fields.firstOrNull {
                                         it.name == "rawChildren"
                                     }?.get(entry)) as? List<*>
-                                    children?.forEach { collect(it, depth + 1) }
+                                    children?.forEach { collect(it, depth + 1, group, keyguardOnly) }
                                 }
                                 entries.forEach { collect(it, 0) }
                                 val reasons = linkedMapOf<String, Int>()
@@ -109,9 +127,14 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
                                     // rear listener applies its own lock-screen privacy rules;
                                     // preserve notifications hidden only by keyguard recency.
                                     if (name == "KeyguardCoordinator" || name == "OriginalUnseenKeyguardCoordinator")
-                                        collect(entry, 0)
+                                        collect(entry, 0, keyguardOnly = true)
                                 }
                                 visibleKeys = keys
+                                visibleGroups = groups
+                                System.getProperties()[SNAPSHOT] = Bundle().apply {
+                                    putStringArrayList("keys", ArrayList(keys))
+                                    putStringArrayList("groups", ArrayList(keys.map { groups[it] ?: it }))
+                                }
                                 if (hookPrefs.getBoolean(ConfigKeys.MORE_DEBUG, false))
                                     YLog.debug("[REAREye-NotifBridge] visible shade keys=${keys.size} filters=$reasons")
                                 dispatchVisibleKeys()
@@ -173,6 +196,7 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
         val keys = visibleKeys ?: return
         routeClient.dispatch(NotificationRouteBridgeContract.Subchannel.VISIBLE_NOTIFICATION_KEYS, Bundle().apply {
             putStringArrayList(NotificationRouteBridgeContract.Keys.VISIBLE_KEYS, ArrayList(keys))
+            putStringArrayList("shadeGroupKeys", ArrayList(keys.map { visibleGroups[it] ?: it }))
         })
     }
 

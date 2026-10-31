@@ -68,7 +68,9 @@
 -dontwarn org.luckypray.dexkit.**
 
 # --- Tool ---
--keep class hk.uwu.reareye.hook.** { *; }
+# Retain hook names while allowing R8 to discard unreachable legacy hook code.
+# The module entry point above remains explicitly retained.
+-keep,allowshrinking class hk.uwu.reareye.hook.** { *; }
 -keep class hk.uwu.reareye.utils.other.AboutLibrariesToolsKt
 -keep class com.hchen.superlyricapi.* {*;}
 -dontwarn android.os.ServiceManager

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="rear_notification_front_apps">通知点按后转主屏的应用</string>
-    <string name="rear_notification_front_apps_desc">Chrome 下载详情已适配为到主屏继续使用。其他应用仅在此勾选后显示翻转提示；未勾选则保留原点按行为。暂停、继续等通知操作按钮保持原功能。重启背屏中心后生效。</string>
+    <string name="rear_notification_front_apps_desc">所有打开页面的通知均自动在主屏打开并显示翻转提示，包括 QQ、微信、抖音及下载详情。暂停、继续等通知操作按钮保持原功能。</string>
     <string name="rear_screen_timeout">背屏亮屏时长</string>
     <string name="rear_screen_timeout_desc">背屏桌面与下拉面板在最后一次操作后继续亮屏所选时长，之后恢复系统息屏。手动息屏仍生效。修改后重启背屏中心。</string>
     <string name="rear_timeout_system">跟随系统</string>
@@ -10,8 +10,10 @@
     <string name="rear_timeout_60">1 分钟</string>
     <string name="rear_timeout_120">2 分钟</string>
     <string name="rear_timeout_300">5 分钟</string>
-    <string name="rear_notification_sync">背屏通知常驻与双向同步</string>
-    <string name="rear_notification_sync_desc">沿用原厂通知样式，将消息和未适配的焦点通知保留在下拉“动态通知与便利贴”。主屏移除后同步消失，背屏左右划掉会同步清除主屏通知；持续通知保留原系统限制。重启背屏中心后生效。</string>
+    <string name="rear_notification_sync">背屏通知增强总开关</string>
+    <string name="rear_notification_sync_desc">控制通知镜像、双向划除、主屏分组折叠、点按后翻转主屏及柔光背景。仅同步所选应用，关闭后恢复原厂处理。展开分组可查看和单独清除消息，折叠时划除整组可清除的消息。修改后重启背屏中心。</string>
+    <string name="rear_notification_glass">通知面板柔光玻璃背景</string>
+    <string name="rear_notification_glass_desc">通知增强开启时，保留原厂背景模糊与转场，减轻黑色遮罩并使用柔和灰蓝色调。关闭可恢复原厂深色背景。效果受系统模糊设置和背屏壁纸影响；不是主屏 OS4 材质的完整移植。</string>
     <string name="rear_notification_sync_apps">同步通知的应用</string>
     <string name="rear_notification_scope_none">当前范围：未选择应用，不同步通知</string>
     <string name="rear_notification_scope_selected">当前范围：仅所选 %1$d 个应用</string>

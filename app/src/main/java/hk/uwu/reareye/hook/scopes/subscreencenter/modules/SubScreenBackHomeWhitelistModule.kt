@@ -14,6 +14,7 @@ import hk.uwu.reareye.hook.utils.resolveHookPackageVersionCode
 import hk.uwu.reareye.ui.config.ConfigKeys
 import hk.uwu.roxyhook.PackageScope
 import hk.uwu.roxyhook.RoxyHooker
+import hk.uwu.roxyhook.HotReloadPolicy
 import org.luckypray.dexkit.DexKitCacheBridge
 import org.luckypray.dexkit.annotations.DexKitExperimentalApi
 
@@ -53,11 +54,16 @@ class SubScreenBackHomeWhitelistModule : RoxyHooker() {
                 returnType = Void.TYPE
                 parameters(String::class.java)
             }.hook {
+                id = "reareye.rear.preserve-app-on-aod"
+                hotReloadPolicy = HotReloadPolicy.REINSTALL
                 replaceUnit {
                     val reason = args(0).cast<String>()
                     val whitelist = hookPrefs.getStringSet(
                         ConfigKeys.SUBSCREEN_LOCK_BACK_HOME_WHITELIST_APPS,
-                    )
+                    ).toMutableSet()
+                    if (hookPrefs.getBoolean(ConfigKeys.REAR_APP_ENABLED, false)) {
+                        whitelist.addAll(hookPrefs.getStringSet(ConfigKeys.ACTIVITIES_WHITELIST_APPS))
+                    }
                     if (reason != AOD_REASON || whitelist.isEmpty()) {
                         callOriginal(*args)
                         return@replaceUnit

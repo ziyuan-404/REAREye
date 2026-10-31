@@ -12,8 +12,7 @@ import hk.uwu.reareye.hook.support.hookPrefs
 import hk.uwu.reareye.ui.config.ConfigKeys
 import hk.uwu.roxyhook.PackageScope
 import hk.uwu.roxyhook.RoxyHooker
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
+import hk.uwu.roxyhook.HotReloadPolicy
 
 /** A finite idle hold on the rear launcher window; never wakes a sleeping display. */
 class RearScreenTimeoutHook : RoxyHooker() {
@@ -43,6 +42,7 @@ class RearScreenTimeoutHook : RoxyHooker() {
             seconds = { hookPrefs.getInt(ConfigKeys.REAR_SCREEN_TIMEOUT_SECONDS, 0) }
             val launcher = "com.xiaomi.subscreencenter.SubScreenLauncher".toClass().resolve()
             launcher.firstMethod { name = "onResume"; parameterCount = 0 }.hook {
+                hotReloadPolicy = HotReloadPolicy.REINSTALL
                 after {
                     val activity = instance as? Activity ?: return@after
                     if (host !== activity) release()
@@ -57,6 +57,7 @@ class RearScreenTimeoutHook : RoxyHooker() {
                 }
             }
             launcher.firstMethod { name = "dispatchTouchEvent"; parameterCount = 1 }.hook {
+                hotReloadPolicy = HotReloadPolicy.REINSTALL
                 after {
                     val action = (args.firstOrNull() as? MotionEvent)?.actionMasked
                     if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) arm()
@@ -64,6 +65,7 @@ class RearScreenTimeoutHook : RoxyHooker() {
             }
             listOf("onPause", "onDestroy").forEach { method ->
                 launcher.firstMethod { name = method; parameterCount = 0 }.hook {
+                    hotReloadPolicy = HotReloadPolicy.REINSTALL
                     before {
                         if (host === instance) { resumed = false; release() }
                     }
@@ -98,18 +100,18 @@ class RearScreenTimeoutHook : RoxyHooker() {
     }
 
     override fun onHotReloadQuiesce() {
-        val done = CountDownLatch(1)
+        seconds = { 0 }
+        resumed = false
+        main.removeCallbacks(expire)
         val cleanup = Runnable {
-            try {
                 release()
                 displays?.unregisterDisplayListener(displayListener)
                 displays = null
                 resumed = false
                 host = null
                 seconds = { 0 }
-            } finally { done.countDown() }
         }
         if (Looper.myLooper() == Looper.getMainLooper()) cleanup.run()
-        else { main.post(cleanup); check(done.await(3, TimeUnit.SECONDS)) { "Rear timeout cleanup timed out" } }
+        else main.post(cleanup)
     }
 }

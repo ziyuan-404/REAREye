@@ -430,6 +430,31 @@ class RearWidgetHook : RoxyHooker() {
             val managerRef = managerInitPoint.className.toClass().resolve()
             val persistenceClass = resolvePersistenceManagerClassName().toClass()
             val persistenceRef = persistenceClass.resolve()
+            // The host survives a module hot reload. Read its own completed-copy flag;
+            // the release runnable will not run again just because our classloader changed.
+            runCatching {
+                val singleton = requireNotNull(dexKitBridge).getFieldDirectOrNull("SSC_PRESET_RELEASE_SINGLETON") {
+                    findField {
+                        matcher {
+                            type = persistenceClass.name
+                            modifiers = Modifier.PUBLIC or Modifier.STATIC or Modifier.FINAL
+                        }
+                    }.singleOrNull()
+                }?.let { field -> field.className.toClass().getDeclaredField(field.name)
+                    .apply { isAccessible = true }.get(null) }
+                val ready = persistenceClass.declaredFields.singleOrNull {
+                    it.type == Boolean::class.javaPrimitiveType && java.lang.reflect.Modifier.isVolatile(it.modifiers)
+                }?.apply { isAccessible = true }
+                presetDataReleased = singleton != null && ready?.getBoolean(singleton) == true
+                if (presetDataReleased) {
+                    mainHandler?.post {
+                        bootstrapFromPrefsOnInit(force = true)
+                        injectAllActiveNotices()
+                        RearNotificationCards.onReady?.invoke()
+                    }
+                    YLog.info("[REAREye-NotificationSync] recovered host preset readiness after reload")
+                }
+            }.onFailure { YLog.warn("Host preset readiness recovery unavailable", it) }
             val postRunnableRef =
                 resolveSmartAssistantPostRunnableClassName().toClass().resolve()
             val postRunnableConstructor = resolveSmartAssistantPostRunnableConstructor()
@@ -549,6 +574,65 @@ class RearWidgetHook : RoxyHooker() {
                     normalizeInitialManagerWidgetPriority(instance, args.getOrNull(0))
                 }
             }
+
+            runCatching {
+                val selection = resolveCachedMethodPoint("SSC_NOTIFICATION_ORDER_SELECTION") {
+                    findMethod { matcher {
+                        declaredClass = resolveSmartAssistantManagerClassName()
+                        paramCount(0); returnType = "int"
+                        usingStrings("Using current display index while inactive: %d")
+                    } }.singleOrNull()
+                }
+                managerRef.firstMethod { name = selection.methodName; parameterCount = 0 }.hook {
+                    before { normalizeNotificationWidgetOrder(instance) }
+                }
+                val activation = resolveCachedMethodPoint("SSC_NOTIFICATION_ORDER_ACTIVATION") {
+                    findMethod { matcher {
+                        declaredClass = resolveSmartAssistantManagerClassName()
+                        paramCount(0); returnType = "void"
+                        usingStrings("Keeping current display index: %d", "Restoring to previous index: %d")
+                    } }.singleOrNull()
+                }
+                managerRef.firstMethod { name = activation.methodName; parameterCount = 0 }.hook {
+                    before { normalizeNotificationWidgetOrder(instance, opening = true) }
+                }
+                val delivery = resolveCachedMethodPoint("SSC_NOTIFICATION_ORDER_DELIVERY") {
+                    findMethod { matcher {
+                        paramCount(0); returnType = "void"
+                        usingStrings("updateWidgets: count=%d, index=%d, activated=%s")
+                    } }.singleOrNull()
+                }
+                val dispatch = resolveCachedMethodPoint("SSC_NOTIFICATION_ORDER_DISPATCH") {
+                    findMethod { matcher {
+                        declaredClass = resolveSmartAssistantManagerClassName()
+                        paramCount(0); returnType = "void"
+                        invokeMethods { add {
+                            declaredClass = delivery.className; name = "<init>"
+                            paramTypes(resolveSmartAssistantManagerClassName(), "int")
+                        }; add {
+                            declaredClass = "android.os.Handler"; name = "post"
+                            paramTypes("java.lang.Runnable"); returnType = "boolean"
+                        } }
+                    } }.singleOrNull()
+                }
+                val closing = resolveCachedMethodPoint("SSC_NOTIFICATION_ORDER_CLOSING") {
+                    findMethod { matcher {
+                        declaredClass = resolveSmartAssistantManagerClassName()
+                        paramTypes("boolean"); returnType = "void"
+                        usingStrings("User manually dismissed SmartAssistant, sending swipe out broadcast if needed")
+                    } }.singleOrNull()
+                }
+                managerRef.firstMethod { name = closing.methodName; parameterCount = 1 }.hook {
+                    after {
+                        if (!hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false)) return@after
+                        val owner = instance ?: return@after
+                        normalizeNotificationWidgetOrder(owner)
+                        // Preload the native first page while hidden, so reopening
+                        // does not show the previous notification before music.
+                        owner.asResolver().firstMethod { name = dispatch.methodName; parameterCount = 0 }.invoke()
+                    }
+                }
+            }.onFailure { YLog.warn("Native notification order unavailable: ${it.javaClass.simpleName}") }
 
             parseWidgetPoint.className.toClass().resolve().firstMethod {
                 name = parseWidgetPoint.methodName
@@ -2007,7 +2091,11 @@ class RearWidgetHook : RoxyHooker() {
                             val keys = payloadCopy.getStringArrayList(NotificationRouteBridgeContract.Keys.VISIBLE_KEYS)
                                 ?: return false
                             if (keys.size > 4096 || keys.any { it.length > 2048 } || keys.sumOf { it.length } > 128_000) return false
-                            RearNotificationCards.setVisibleSourceKeys?.invoke(keys.toSet())
+                            val groups = payloadCopy.getStringArrayList("shadeGroupKeys")
+                            if (groups != null && (groups.size != keys.size || groups.any { it.length > 2048 } ||
+                                        groups.sumOf { it.length } > 128_000)) return false
+                            RearNotificationCards.setVisibleSourceKeys?.invoke(keys.toSet(),
+                                if (groups == null) emptyMap() else keys.zip(groups).toMap())
                         }
 
                         else -> return false
@@ -2194,7 +2282,7 @@ class RearWidgetHook : RoxyHooker() {
                 business = business,
                 payload = payload,
                 packageName = NotificationRouteBridgeContract.MODULE_PACKAGE,
-                options = RearWidgetNoticeOptions(disablePopup = true, showTimeTip = false, priority = 300),
+                options = RearWidgetNoticeOptions(disablePopup = true, showTimeTip = true, priority = 300),
             )
             applyRuntimeMaps(force = false)
             patchManagerAppGates(manager)
@@ -3059,10 +3147,7 @@ class RearWidgetHook : RoxyHooker() {
             val normalWidgets = original.filter({ isPriorityManagedWidget(it) })
             if (normalWidgets.size <= 1) return
 
-            val sortedNormalWidgets = normalWidgets.sortedWith(
-                compareByDescending<Any> { managerWidgetPriority(it) }
-                    .thenByDescending { managerWidgetCreatedAt(it) }
-            )
+            val sortedNormalWidgets = normalWidgets.sortedWith(notificationWidgetOrder())
             if (sortedNormalWidgets == normalWidgets) return
 
             val iterator = sortedNormalWidgets.iterator()
@@ -3092,10 +3177,7 @@ class RearWidgetHook : RoxyHooker() {
             val original = ArrayList(list)
             val normalWidgets = original.filter({ isPriorityManagedWidget(it) })
             if (normalWidgets.isEmpty()) return
-            val sortedNormalWidgets = normalWidgets.sortedWith(
-                compareByDescending<Any> { managerWidgetPriority(it) }
-                    .thenByDescending { managerWidgetCreatedAt(it) }
-            )
+            val sortedNormalWidgets = normalWidgets.sortedWith(notificationWidgetOrder())
             val sorted = ArrayList(original)
             val iterator = sortedNormalWidgets.iterator()
             for (index in sorted.indices) {
@@ -3112,7 +3194,9 @@ class RearWidgetHook : RoxyHooker() {
             val currentBeforeInactive = runCatching {
                 managerTarget.asResolver().firstField { name = beforeInactiveFieldName }.get<Int>()
             }.getOrNull() ?: -1
-            val preferredIndex = list.indexOfFirst({ isPriorityManagedWidget(it) })
+            val preferredIndex = (if (hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false))
+                list.indexOfLast { isPriorityManagedWidget(it) }
+            else list.indexOfFirst { isPriorityManagedWidget(it) })
                 .takeIf { it >= 0 }
                 ?: 0
             val indexChanged = currentBeforeInactive != preferredIndex
@@ -3134,6 +3218,51 @@ class RearWidgetHook : RoxyHooker() {
         return !bundle.getBoolean("force_popup", false) &&
                 !bundle.getBoolean("enableFloat", false) &&
                 !bundle.getBoolean("is_pin", false)
+    }
+
+    private fun PackageScope.notificationWidgetOrder(): Comparator<Any> =
+        compareBy<Any> {
+            if (!hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false)) 0
+            else when (managerWidgetBundle(it)?.getString("business")) {
+                // The rear drawer enters from the end of the native pager.
+                // Music must be nearest that edge, rather than list index zero.
+                "music" -> 2
+                RearNotificationCards.BUSINESS -> 0
+                else -> 1
+            }
+        }.thenByDescending { managerWidgetPriority(it) }
+            .thenByDescending { managerWidgetCreatedAt(it) }
+
+    private fun PackageScope.normalizeNotificationWidgetOrder(target: Any?, opening: Boolean = false) {
+        if (!hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false)) return
+        val owner = target ?: return
+        val list = owner.asResolver().firstField { name = resolveSmartAssistantManagerWidgetListFieldName() }
+            .get<ArrayList<Any>>() ?: return
+        synchronized(list) {
+            if (list.isEmpty()) return
+            val currentField = owner.asResolver().firstField { name = resolveSmartAssistantManagerCurrentIndexFieldName() }
+            val previousField = owner.asResolver().firstField { name = resolveSmartAssistantManagerBeforeInactiveIndexFieldName() }
+            val currentIndex = currentField.get<Int>() ?: -1
+            val previousIndex = previousField.get<Int>() ?: -1
+            val current = list.getOrNull(currentIndex)
+            val previous = list.getOrNull(previousIndex)
+            val ordinary = list.filter { isPriorityManagedWidget(it) }
+            val sorted = ordinary.sortedWith(notificationWidgetOrder()).iterator()
+            // Leave calls, pinned cards and forced popups in their factory slots.
+            for (index in list.indices) {
+                if (isPriorityManagedWidget(list[index])) list[index] = sorted.next()
+            }
+            val entryNative = list.lastOrNull {
+                isPriorityManagedWidget(it) && managerWidgetBundle(it)?.getString("business") != RearNotificationCards.BUSINESS
+            }
+            // Preserve the selected record by identity when a notification arrives.
+            // The entry edge is the list's end: select its native card before
+            // the drawer appears, preserving the rear's reverse traversal.
+            val selected = if (opening && entryNative != null && (current == null || isPriorityManagedWidget(current))) entryNative else current
+            currentField.set(selected?.let(list::indexOf) ?: -1)
+            val remembered = if (currentIndex < 0 && entryNative != null) entryNative else previous
+            previousField.set(remembered?.let(list::indexOf) ?: -1)
+        }
     }
 
     private fun PackageScope.managerWidgetBundle(widget: Any): Bundle? {
@@ -3225,6 +3354,20 @@ class RearWidgetHook : RoxyHooker() {
             .getOrNull() ?: return false
         var recovered = manager != null
         if (!recovered) {
+            // The current ROM stores its singleton in an obfuscated holder (U1.s0),
+            // so getInstance/INSTANCE name probes cannot recover it after reload.
+            val singleton = runCatching {
+                requireNotNull(dexKitBridge).getFieldDirectOrNull("SSC_LIVE_MANAGER_SINGLETON") {
+                    findField { matcher {
+                        type = managerClass.name
+                        modifiers = Modifier.PUBLIC or Modifier.STATIC or Modifier.FINAL
+                    } }.singleOrNull()
+                }?.let { field -> field.className.toClass().getDeclaredField(field.name)
+                    .apply { isAccessible = true }.get(null) }
+            }.getOrNull()
+            recovered = adoptRecoveredManager(singleton)
+        }
+        if (!recovered) {
             recovered = adoptRecoveredManager(
                 resolveNamedStaticInstance(
                     type = managerClass,
@@ -3270,6 +3413,17 @@ class RearWidgetHook : RoxyHooker() {
                 record?.javaClass?.getDeclaredField("activity")
                     ?.apply { isAccessible = true }?.get(record)
             }.getOrNull() ?: return@forEach
+            val panelType = "com.xiaomi.subscreencenter.SmartAssistantPanel".toClass()
+            generateSequence<Class<*>>(activity.javaClass) { it.superclass }
+                .flatMap { it.declaredFields.asSequence() }
+                .filter { panelType.isAssignableFrom(it.type) }
+                .forEach { panelField ->
+                    val panel = runCatching { panelField.isAccessible = true; panelField.get(activity) }.getOrNull()
+                        ?: return@forEach
+                    rememberSmartAssistantPanel(panel)
+                    if (!recovered) recovered = adoptRecoveredManager(readNamedInstanceField(panel, managerFieldNames))
+                    rememberSmartAssistantPanel(panel)
+                }
             if (!recovered) {
                 recovered = adoptRecoveredManager(
                     readNamedInstanceField(activity, managerFieldNames)

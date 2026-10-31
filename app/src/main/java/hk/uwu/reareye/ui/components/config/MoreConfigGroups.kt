@@ -37,14 +37,31 @@ internal val MoreHiddenConfigKeys = setOf(
 
 internal val MoreConfigGroups = listOf(
     MoreConfigGroup(
+        id = "rear_apps",
+        titleRes = R.string.rear_app_settings_title,
+        descriptionRes = R.string.rear_app_settings_desc,
+        icon = Icons.Rounded.Apps,
+        itemKeys = listOf(
+            ConfigKeys.REAR_APP_ENABLED,
+            ConfigKeys.CFG_REAR_APP_DISPLAY,
+            ConfigKeys.HOOK_ACTIVITIES_WHITELIST,
+            ConfigKeys.ACTIVITIES_WHITELIST_APPS,
+            ConfigKeys.REAR_APP_DPI,
+            ConfigKeys.REAR_APP_KEYBOARD,
+            ConfigKeys.REAR_APP_FACE_AUTH,
+            ConfigKeys.REAR_APP_GESTURES,
+            ConfigKeys.REAR_APP_HOME_STYLE,
+            ConfigKeys.REAR_APP_ORDER_MODE,
+        ),
+    ),
+    MoreConfigGroup(
         id = "apps_runtime",
         titleRes = R.string.config_more_apps_runtime_title,
         descriptionRes = R.string.config_more_apps_runtime_desc,
         icon = Icons.Rounded.Apps,
         itemKeys = listOf(
+            ConfigKeys.CFG_CUSTOM_BOUNDS_COMPAT_MANAGER,
             ConfigKeys.REAR_SCREEN_TIMEOUT_SECONDS,
-            ConfigKeys.HOOK_ACTIVITIES_WHITELIST,
-            ConfigKeys.ACTIVITIES_WHITELIST_APPS,
             ConfigKeys.ALLOW_ALL_ACTIVITIES,
             ConfigKeys.ALLOW_EXTERNAL_DISPLAY_LAUNCH,
             ConfigKeys.HOOK_BACKGROUND_WHITELIST,
@@ -52,7 +69,6 @@ internal val MoreConfigGroups = listOf(
             ConfigKeys.BACKGROUND_LOCK_APPS,
             ConfigKeys.HOOK_SKIP_LOCK_BACK_HOME,
             ConfigKeys.SUBSCREEN_LOCK_BACK_HOME_WHITELIST_APPS,
-            ConfigKeys.CFG_CUSTOM_BOUNDS_COMPAT_MANAGER,
             ConfigKeys.HOOK_DISABLE_REAR_SCREEN_COVER,
             ConfigKeys.SUBSCREEN_DOUBLE_TAP_SLEEP_DISABLED_APPS,
             ConfigKeys.SUBSCREEN_DOUBLE_TAP_WAKE_DISABLED_APPS,
@@ -68,8 +84,8 @@ internal val MoreConfigGroups = listOf(
             ConfigKeys.CFG_REAR_WIDGET_SCENE_ROUTE_MANAGER,
             ConfigKeys.HOOK_ALLOW_REAR_FOCUS_NOTICES,
             ConfigKeys.REAR_NOTIFICATION_SYNC,
+            ConfigKeys.REAR_NOTIFICATION_GLASS,
             ConfigKeys.REAR_NOTIFICATION_SYNC_APPS,
-            ConfigKeys.REAR_NOTIFICATION_FRONT_APPS,
         ),
     ),
     MoreConfigGroup(

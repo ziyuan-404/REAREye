@@ -2,9 +2,14 @@ package hk.uwu.reareye.hook
 
 import hk.uwu.reareye.hook.core.DexKitBootstrap
 import hk.uwu.reareye.hook.scopes.subscreencenter.SubscreenCenterScope
+import hk.uwu.reareye.hook.scopes.subscreencenter.modules.RearFreeformUiHook
+import hk.uwu.reareye.hook.scopes.subscreencenter.modules.RearSourceAnimationHook
 import hk.uwu.reareye.hook.scopes.system.SystemScope
 import hk.uwu.reareye.hook.scopes.thememanager.ThemeManagerScope
 import hk.uwu.reareye.hook.scopes.voiceassist.VoiceAssistScope
+import hk.uwu.reareye.hook.scopes.wechat.RearWechatScope
+import hk.uwu.reareye.hook.scopes.qq.RearQqScope
+import hk.uwu.reareye.hook.scopes.ime.RearImeScope
 import hk.uwu.roxyhook.PackageScope
 import hk.uwu.roxyhook.ProcessContext
 import hk.uwu.roxyhook.RoxyModule
@@ -22,6 +27,7 @@ class HookEntry : RoxyModule(), LibXposedHotReload {
     private val replay = LibXposedPackageReplay("reareye.reload.")
 
     override fun PackageScope.onLoad() {
+        if(!isSystemServer&&!isFirstPackage)return
         DexKitBootstrap.ensureLoaded()
         replay.record(this)
         install(this)
@@ -41,9 +47,15 @@ class HookEntry : RoxyModule(), LibXposedHotReload {
     }
 
     private fun install(scope: PackageScope) = with(scope) {
+        if(!isSystemServer&&!isFirstPackage)return@with
         loadSystem(SystemScope())
         loadAll(SubscreenCenterScope())
+        loadAll(RearFreeformUiHook())
+        loadAll(RearSourceAnimationHook())
         loadAll(ThemeManagerScope())
         loadAll(VoiceAssistScope())
+        loadAll(RearWechatScope())
+        loadAll(RearQqScope())
+        loadAll(RearImeScope())
     }
 }
