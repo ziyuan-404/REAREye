@@ -10,13 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="./README_EN.md">English</a> · <a href="https://github.com/killerprojecte/REAREye">项目主页</a>
+  <a href="./README_EN.md">English</a> · <a href="https://github.com/ziyuan-404/REAREye">项目主页</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/killerprojecte/REAREye/releases"><img src="https://img.shields.io/github/v/release/killerprojecte/REAREye?display_name=tag" alt="GitHub release"></a>
-  <a href="https://github.com/killerprojecte/REAREye/blob/main/LICENSE"><img src="https://img.shields.io/github/license/killerprojecte/REAREye" alt="GitHub license"></a>
-  <a href="https://github.com/killerprojecte/REAREye/issues"><img src="https://img.shields.io/github/issues/killerprojecte/REAREye" alt="GitHub issues"></a>
+  <a href="https://github.com/ziyuan-404/REAREye/releases"><img src="https://img.shields.io/github/v/release/ziyuan-404/REAREye?display_name=tag" alt="GitHub release"></a>
+  <a href="https://github.com/ziyuan-404/REAREye/blob/feature/rear-experience/LICENSE"><img src="https://img.shields.io/github/license/ziyuan-404/REAREye" alt="GitHub license"></a>
+  <a href="https://github.com/ziyuan-404/REAREye/issues"><img src="https://img.shields.io/github/issues/ziyuan-404/REAREye" alt="GitHub issues"></a>
   <a href="https://developer.android.com/"><img src="https://img.shields.io/badge/Android-16%2B-3DDC84?logo=android&logoColor=white" alt="Android"></a>
   <a href="https://github.com/LSPosed/LSPosed"><img src="https://img.shields.io/badge/Framework-LSPosed%20%2F%20Xposed-5C6BC0" alt="Framework"></a>
 </p>
@@ -33,6 +33,21 @@
 - 解除主题管理中的多项限制，包括视频壁纸时长、帧率、静音和模板数量限制。
 - 移除国行 GMS 功能限制。
 - 提供切换主屏 / 背屏的快捷设置 Tile，以及常用目标应用的快捷终止入口。
+
+## 二改内容（ziyuan-404）
+
+本分支在上游最新 `dev` 基础上加入背屏应用、通知和输入体验的二改，当前首个二改 Release 为 [`v2.0.0-r266-rear-security`](https://github.com/ziyuan-404/REAREye/releases/tag/v2.0.0-r266-rear-security)。主要内容如下：
+
+- **背屏应用管理**：增加独立的背屏应用目录和应用列表管理，可显示原生应用图标、按选择顺序 / 应用名 / 包名排序，并支持原生应用栏或蜂窝排列。
+- **应用显示调节**：支持为背屏应用单独设置等效 DPI、显示区域、圆角和摄像头避让区域；显示区域可以拖动、缩放，也可以扩展到完整背屏范围。
+- **键盘与交互**：背屏应用输入框可调用当前输入法；增加背屏返回手势、上拉应用栏手势、自由窗口显示和源动画适配。
+- **应用安全**：支持从背屏应用列表或通知启动前进行原厂人脸验证；未录入、验证失败或取消时不会打开应用。
+- **微信 / QQ 适配**：增加微信和 QQ 的背屏专用作用域，改善应用启动、输入和通知相关行为；同时接入百度输入法作用域，便于在背屏完成文字输入和回复。
+- **通知二改**：支持选择性同步通知、双向划除、主屏通知分组折叠、整组清除、点按后翻转到主屏，以及背屏通知柔光玻璃背景；保留系统通话、闹钟、倒计时和音乐卡片的原生优先级。
+- **通知卡片与充电**：调整背屏卡片顺序，完全收起后优先显示音乐卡片；增加绿色液体充电动画、亮屏持续充电显示和背屏亮屏时长控制。
+- **系统兼容性**：限制模块只在系统服务或首个包加载，减少重复初始化；摄像头相关包保留独立的背屏几何处理，避免通用显示区域设置覆盖相机适配；补充背屏密度、任务配置、双击息屏和签名权限白名单处理。
+
+二改功能默认不会自动替所有应用开启。安装后请在模块配置中选择需要放到背屏的应用，再按需开启 DPI、键盘、人脸验证、手势、显示区域和通知同步选项。部分设置修改后需要重启背屏中心或对应系统进程。
 
 ## 主要功能
 
@@ -203,7 +218,7 @@
 
 ## 安装方式
 
-1. 从 [Releases](https://github.com/killerprojecte/REAREye/releases) 下载最新 APK 并安装。
+1. 从 [Releases](https://github.com/ziyuan-404/REAREye/releases) 下载最新 APK 并安装。
 2. 在 LSPosed 或兼容框架中启用 `REAREye`。
 3. 确认模块作用域包含：`android`、`com.xiaomi.subscreencenter`、`com.android.thememanager`、
    `com.android.systemui`。
@@ -258,9 +273,9 @@
 
 ## 获取帮助
 
-- 提交问题反馈: [Issues](https://github.com/killerprojecte/REAREye/issues)
-- 查看版本发布: [Releases](https://github.com/killerprojecte/REAREye/releases)
-- 项目仓库地址: [killerprojecte/REAREye](https://github.com/killerprojecte/REAREye)
+- 提交问题反馈: [Issues](https://github.com/ziyuan-404/REAREye/issues)
+- 查看版本发布: [Releases](https://github.com/ziyuan-404/REAREye/releases)
+- 项目仓库地址: [ziyuan-404/REAREye](https://github.com/ziyuan-404/REAREye)
 
 ## 免责声明
 
