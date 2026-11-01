@@ -76,6 +76,10 @@ internal object RearNotificationGestures {
                 val footer = current?.findViewById<View>(hk.uwu.reareye.R.id.rear_notification_footer)
                 suppressNativeDoubleTap = footer?.isShown == true && footer.getGlobalVisibleRect(rect) &&
                     rect.contains(event.rawX.toInt(), event.rawY.toInt())
+                val recorderControls = current?.findViewWithTag<View>(NativeRearRecorder.CONTROLS)
+                suppressNativeDoubleTap = suppressNativeDoubleTap ||
+                    (recorderControls?.isShown == true && recorderControls.getGlobalVisibleRect(rect) &&
+                        rect.contains(event.rawX.toInt(), event.rawY.toInt()))
                 if (suppressNativeDoubleTap) doubleTap = false
                 target = current?.let(targets::get)
                 surface = current?.let { NativeRearCardHost.container(it) ?: it }

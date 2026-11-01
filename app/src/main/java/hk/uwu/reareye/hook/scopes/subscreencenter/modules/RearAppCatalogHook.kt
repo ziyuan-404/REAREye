@@ -342,8 +342,10 @@ class RearAppCatalogHook : RoxyHooker() {
                                             val container=nativeView as FrameLayout
                                             (image.parent as? ViewGroup)?.removeView(image)
                                             container.removeAllViews()
-                                            image.scaleType=ImageView.ScaleType.FIT_CENTER
-                                            val inset=12
+                                            roundPickerIcon(image)
+                                            // Keep the stock item's live blur material visible as a
+                                            // translucent circular rim around the separately masked icon.
+                                            val inset=(6*view.resources.displayMetrics.density).toInt()
                                             container.setPadding(inset,inset,inset,inset)
                                             container.addView(image,FrameLayout.LayoutParams(-1,-1))
                                             images.add(container)
@@ -368,6 +370,9 @@ class RearAppCatalogHook : RoxyHooker() {
                                     runCatching { NativeRearAppLaunch.open(actual,launch,hookPrefs) }.onFailure { YLog.warn("Native rear app launch failed",it) }
                                 }
                                 val image = firstImage(view) ?: return@after
+                                // OEM picker assets are already circular. Apply the same
+                                // mask to third-party icons at the stock 36dp size.
+                                roundPickerIcon(image)
                                 image.tag = model
                                 runCatching {
                                     // Cancel the stock Glide resource-0 request before setting the
@@ -451,6 +456,17 @@ class RearAppCatalogHook : RoxyHooker() {
                 YLog.info("Selected rear apps added to stock picker UI callbacks")
             }.onFailure { YLog.warn("Stock rear app shortcuts unavailable", it) }
         }
+    }
+
+    /** Shared by the stock list and honeycomb so their icon shapes stay identical. */
+    private fun roundPickerIcon(image: ImageView) {
+        image.scaleType = ImageView.ScaleType.CENTER_CROP
+        image.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+        image.clipToOutline = true
     }
 
     private fun firstImage(view: View): ImageView? {

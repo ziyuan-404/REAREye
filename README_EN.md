@@ -39,6 +39,18 @@
 - Provide Quick Settings tiles for moving apps between the main and rear screens, plus shortcuts for
   force-stopping target apps.
 
+## Fork enhancements (ziyuan-404)
+
+The fork is maintained on [`develop/2.0`](https://github.com/ziyuan-404/REAREye/tree/develop/2.0), with integrated upstream `dev` updates.
+
+- Rear app catalog, DPI and display-region controls, input-method support, face verification, and native launch gestures.
+- Circular third-party icons in both the stock app picker and honeycomb layout; honeycomb icons retain the stock translucent blur rim.
+- Selected notification mirroring, grouped notifications, two-way dismissal, front-screen handoff, and ordering adapted to the rear pager's direction. SystemUI's virtual “More notifications” entry is excluded.
+- Recorder cards reuse the stock timer, animated waveform, and icon-only pause/resume and stop controls. Playback uses the stock focus notification on the front screen as well, with native recorder controls shared by both displays.
+- Liquid charging animation and configurable rear-screen timeout.
+
+Enable the required features in the module settings. Recorder playback adaptation also requires `com.android.soundrecorder` in the LSPosed module scope and a restart of the recorder app.
+
 ## Main Features
 
 ### Module Settings

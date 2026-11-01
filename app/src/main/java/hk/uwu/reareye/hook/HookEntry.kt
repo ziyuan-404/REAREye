@@ -8,6 +8,7 @@ import hk.uwu.reareye.hook.scopes.system.SystemScope
 import hk.uwu.reareye.hook.scopes.thememanager.ThemeManagerScope
 import hk.uwu.reareye.hook.scopes.voiceassist.VoiceAssistScope
 import hk.uwu.reareye.hook.scopes.wechat.RearWechatScope
+import hk.uwu.reareye.hook.scopes.recorder.RearRecorderScope
 import hk.uwu.reareye.hook.scopes.qq.RearQqScope
 import hk.uwu.reareye.hook.scopes.ime.RearImeScope
 import hk.uwu.roxyhook.PackageScope
@@ -57,5 +58,6 @@ class HookEntry : RoxyModule(), LibXposedHotReload {
         loadAll(RearWechatScope())
         loadAll(RearQqScope())
         loadAll(RearImeScope())
+        loadAll(RearRecorderScope())
     }
 }

@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/ziyuan-404/REAREye/releases"><img src="https://img.shields.io/github/v/release/ziyuan-404/REAREye?display_name=tag" alt="GitHub release"></a>
-  <a href="https://github.com/ziyuan-404/REAREye/blob/feature/rear-experience/LICENSE"><img src="https://img.shields.io/github/license/ziyuan-404/REAREye" alt="GitHub license"></a>
+  <a href="https://github.com/ziyuan-404/REAREye/blob/develop/2.0/LICENSE"><img src="https://img.shields.io/github/license/ziyuan-404/REAREye" alt="GitHub license"></a>
   <a href="https://github.com/ziyuan-404/REAREye/issues"><img src="https://img.shields.io/github/issues/ziyuan-404/REAREye" alt="GitHub issues"></a>
   <a href="https://developer.android.com/"><img src="https://img.shields.io/badge/Android-16%2B-3DDC84?logo=android&logoColor=white" alt="Android"></a>
   <a href="https://github.com/LSPosed/LSPosed"><img src="https://img.shields.io/badge/Framework-LSPosed%20%2F%20Xposed-5C6BC0" alt="Framework"></a>
@@ -36,15 +36,16 @@
 
 ## 二改内容（ziyuan-404）
 
-本分支在上游最新 `dev` 基础上加入背屏应用、通知和输入体验的二改，当前首个二改 Release 为 [`v2.0.0-r266-rear-security`](https://github.com/ziyuan-404/REAREye/releases/tag/v2.0.0-r266-rear-security)。主要内容如下：
+二改维护分支为 [`develop/2.0`](https://github.com/ziyuan-404/REAREye/tree/develop/2.0)，集成上游 `dev` 的相关更新，并加入背屏应用、通知和输入体验改进。主要内容如下：
 
-- **背屏应用管理**：增加独立的背屏应用目录和应用列表管理，可显示原生应用图标、按选择顺序 / 应用名 / 包名排序，并支持原生应用栏或蜂窝排列。
+- **背屏应用管理**：增加独立的背屏应用目录和应用列表管理，可显示原生应用图标、按选择顺序 / 应用名 / 包名排序，并支持原生应用栏或蜂窝排列；两种界面的第三方应用图标统一使用圆形裁切，蜂窝布局保留原厂半透明模糊外圈。
 - **应用显示调节**：支持为背屏应用单独设置等效 DPI、显示区域、圆角和摄像头避让区域；显示区域可以拖动、缩放，也可以扩展到完整背屏范围。
 - **键盘与交互**：背屏应用输入框可调用当前输入法；增加背屏返回手势、上拉应用栏手势、自由窗口显示和源动画适配。
 - **应用安全**：支持从背屏应用列表或通知启动前进行原厂人脸验证；未录入、验证失败或取消时不会打开应用。
 - **微信 / QQ 适配**：增加微信和 QQ 的背屏专用作用域，改善应用启动、输入和通知相关行为；同时接入百度输入法作用域，便于在背屏完成文字输入和回复。
 - **通知二改**：支持选择性同步通知、双向划除、主屏通知分组折叠、整组清除、点按后翻转到主屏，以及背屏通知柔光玻璃背景；保留系统通话、闹钟、倒计时和音乐卡片的原生优先级。
-- **通知卡片与充电**：调整背屏卡片顺序，完全收起后优先显示音乐卡片；增加绿色液体充电动画、亮屏持续充电显示和背屏亮屏时长控制。
+- **通知卡片与充电**：按正屏通知列表和背屏实际翻页方向适配反向顺序，过滤系统“更多通知”虚拟聚合入口，避免出现空白“系统界面”卡片；增加绿色液体充电动画、亮屏持续充电显示和背屏亮屏时长控制。
+- **录音机通知**：背屏录音卡片复用原厂计时、波形动画和纯图标的暂停 / 继续、结束按钮；录音回放的正屏通知也使用原厂焦点卡片样式，正背屏共用录音机原生播放控制。需在 LSPosed 作用域中勾选系统录音机 `com.android.soundrecorder`，并重新启动录音机。
 - **系统兼容性**：限制模块只在系统服务或首个包加载，减少重复初始化；摄像头相关包保留独立的背屏几何处理，避免通用显示区域设置覆盖相机适配；补充背屏密度、任务配置、双击息屏和签名权限白名单处理。
 
 二改功能默认不会自动替所有应用开启。安装后请在模块配置中选择需要放到背屏的应用，再按需开启 DPI、键盘、人脸验证、手势、显示区域和通知同步选项。部分设置修改后需要重启背屏中心或对应系统进程。

@@ -26,7 +26,7 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
     private val activeSnapshots = ConcurrentHashMap<String, NotificationRouteSnapshot>()
     private val routeClient = NotificationRouteBridgeClient()
     private val main = Handler(Looper.getMainLooper())
-    private var visibleKeys: Set<String>? = null
+    private var visibleKeys: List<String>? = null
     private var visibleGroups: Map<String, String> = emptyMap()
     private var syncEnabled: () -> Boolean = { false }
     private val visibilityHeartbeat = object : Runnable {
@@ -58,7 +58,7 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
             // Bundle/String survive replacement of the module classloader. Without
             // this, a reload clears every rear card until ShadeListBuilder runs again.
             (System.getProperties()[SNAPSHOT] as? Bundle)?.let { saved ->
-                visibleKeys = saved.getStringArrayList("keys")?.toSet()
+                visibleKeys = saved.getStringArrayList("keys")?.toList()
                 val groups = saved.getStringArrayList("groups").orEmpty()
                 visibleGroups = saved.getStringArrayList("keys").orEmpty().zip(groups).toMap()
             }
@@ -129,7 +129,7 @@ class SystemUiNotificationBridgeHook : RoxyHooker() {
                                     if (name == "KeyguardCoordinator" || name == "OriginalUnseenKeyguardCoordinator")
                                         collect(entry, 0, keyguardOnly = true)
                                 }
-                                visibleKeys = keys
+                                visibleKeys = keys.toList()
                                 visibleGroups = groups
                                 System.getProperties()[SNAPSHOT] = Bundle().apply {
                                     putStringArrayList("keys", ArrayList(keys))

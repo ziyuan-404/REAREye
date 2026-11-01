@@ -628,7 +628,7 @@ class RearWidgetHook : RoxyHooker() {
                         val owner = instance ?: return@after
                         normalizeNotificationWidgetOrder(owner)
                         // Preload the native first page while hidden, so reopening
-                        // does not show the previous notification before music.
+                        // does not briefly show the previous page before the ranked entry.
                         owner.asResolver().firstMethod { name = dispatch.methodName; parameterCount = 0 }.invoke()
                     }
                 }
@@ -2094,7 +2094,9 @@ class RearWidgetHook : RoxyHooker() {
                             val groups = payloadCopy.getStringArrayList("shadeGroupKeys")
                             if (groups != null && (groups.size != keys.size || groups.any { it.length > 2048 } ||
                                         groups.sumOf { it.length } > 128_000)) return false
-                            RearNotificationCards.setVisibleSourceKeys?.invoke(keys.toSet(),
+                            RearNotificationCards.sourceOrder = keys.toList()
+                            normalizeNotificationWidgetOrder(manager)
+                            RearNotificationCards.setVisibleSourceKeys?.invoke(keys.toList(),
                                 if (groups == null) emptyMap() else keys.zip(groups).toMap())
                         }
 
@@ -3220,18 +3222,26 @@ class RearWidgetHook : RoxyHooker() {
                 !bundle.getBoolean("is_pin", false)
     }
 
-    private fun PackageScope.notificationWidgetOrder(): Comparator<Any> =
-        compareBy<Any> {
+    private fun PackageScope.notificationWidgetOrder(): Comparator<Any> {
+        // Store the opposite shade order in the factory pager. The rear panel's
+        // entry/drag direction must be accounted for as well; ascending ranks
+        // produced the forward visual order on the actual device.
+        val ranks = RearNotificationCards.sourceOrder.withIndex().associate { it.value to -it.index }
+        return compareBy<Any> { widget ->
             if (!hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false)) 0
-            else when (managerWidgetBundle(it)?.getString("business")) {
-                // The rear drawer enters from the end of the native pager.
-                // Music must be nearest that edge, rather than list index zero.
-                "music" -> 2
-                RearNotificationCards.BUSINESS -> 0
-                else -> 1
+            else {
+                val bundle = managerWidgetBundle(widget)
+                val source = bundle?.getString("__notification_source_key__")
+                ranks[source] ?: widget.javaClass.declaredFields.asSequence()
+                    .filter { it.type == String::class.java }
+                    .mapNotNull { field ->
+                        field.isAccessible = true
+                        ranks[field.get(widget) as? String]
+                    }.firstOrNull() ?: 1
             }
         }.thenByDescending { managerWidgetPriority(it) }
             .thenByDescending { managerWidgetCreatedAt(it) }
+    }
 
     private fun PackageScope.normalizeNotificationWidgetOrder(target: Any?, opening: Boolean = false) {
         if (!hookPrefs.getBoolean(ConfigKeys.REAR_NOTIFICATION_SYNC, false)) return
@@ -3252,11 +3262,9 @@ class RearWidgetHook : RoxyHooker() {
             for (index in list.indices) {
                 if (isPriorityManagedWidget(list[index])) list[index] = sorted.next()
             }
-            val entryNative = list.lastOrNull {
-                isPriorityManagedWidget(it) && managerWidgetBundle(it)?.getString("business") != RearNotificationCards.BUSINESS
-            }
+            val entryNative = list.lastOrNull { isPriorityManagedWidget(it) }
             // Preserve the selected record by identity when a notification arrives.
-            // The entry edge is the list's end: select its native card before
+            // The entry edge is the list's end: select its last card before
             // the drawer appears, preserving the rear's reverse traversal.
             val selected = if (opening && entryNative != null && (current == null || isPriorityManagedWidget(current))) entryNative else current
             currentField.set(selected?.let(list::indexOf) ?: -1)

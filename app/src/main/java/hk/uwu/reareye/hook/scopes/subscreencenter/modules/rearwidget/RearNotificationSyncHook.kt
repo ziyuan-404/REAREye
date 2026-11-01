@@ -70,7 +70,7 @@ class RearNotificationSyncHook : RoxyHooker() {
     private val rendered = LinkedHashMap<String, RenderVersion>()
     private var receiverContext: Context? = null
     private var screenLocked = false
-    private var visibleSourceKeys: Set<String>? = null
+    private var visibleSourceKeys: List<String>? = null
     private var lastSyncSummary = ""
     private var sourceGroups: Map<String, String> = emptyMap()
     private var groupedSources: Map<String, List<StatusBarNotification>> = emptyMap()
@@ -239,7 +239,8 @@ class RearNotificationSyncHook : RoxyHooker() {
         val snapshot = runCatching { host.activeNotifications?.toList() }.getOrNull() ?: return
         val keys = snapshot.mapTo(HashSet()) { it.key }
         snapshot.forEach { active[it.key] = it }
-        groupedSources = snapshot.filter(::sourceEligible).groupBy(::groupId)
+        val frontRanks = visibleSourceKeys.orEmpty().withIndex().associate { it.value to it.index }
+        groupedSources = snapshot.filter(::sourceEligible).sortedBy { frontRanks[it.key] ?: Int.MAX_VALUE }.groupBy(::groupId)
         expandedGroups.retainAll(groupedSources.keys)
         // Also discard restored mirror records that are outside the current
         // whitelist, even before this process has populated its `shown` set.
@@ -261,7 +262,7 @@ class RearNotificationSyncHook : RoxyHooker() {
         if (!sourceEligible(sbn)) return false
         val group = groupId(sbn)
         val members = groupedSources[group].orEmpty()
-        return group in expandedGroups || members.maxWithOrNull(compareBy<StatusBarNotification> { it.postTime }.thenBy { it.key })?.key == sbn.key
+        return group in expandedGroups || members.firstOrNull()?.key == sbn.key
     }
 
     private fun groupId(sbn: StatusBarNotification): String = sourceGroups[sbn.key]
@@ -276,6 +277,9 @@ class RearNotificationSyncHook : RoxyHooker() {
         // messages can belong to another UserHandle and must not be dropped.
         if (visibleSourceKeys?.contains(sbn.key) != true) return false
         val n = sbn.notification
+        // SystemUI's "More notifications" shelf is a virtual navigation entry,
+        // not a message. Mirroring it produces an empty "System UI" card.
+        if (sbn.packageName == "com.android.systemui" && n.channelId == "id_aggregate") return false
         if ((n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return false
         // Keep the native call, alarm, countdown, and media controls.
         if (n.extras.containsKey(Notification.EXTRA_MEDIA_SESSION) ||
@@ -506,13 +510,33 @@ class RearNotificationSyncHook : RoxyHooker() {
                 container.addView(bodyView, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
             }
         }
+        val recorder = !redacted && sbn.packageName == "com.android.soundrecorder" &&
+            NativeRearRecorder.bind(context, nativeRoot, n) { index ->
+                val latest = active[sbn.key]
+                if (latest != null && privacy(latest) == false && !NativeRearMotion.isFlipping(view)) {
+                    val action = NativeRearRecorder.actions(latest.notification).getOrNull(index)
+                    // A button from an old bind must never execute a new state's
+                    // opposite action (pause becoming resume, for example).
+                    val bound = NativeRearRecorder.actions(n).getOrNull(index)
+                    if (action?.actionIntent == bound?.actionIntent) runCatching {
+                        RearNotificationGestures.cancelTap()
+                        action?.actionIntent?.send()
+                    }.onFailure { YLog.warn("Rear recorder action unavailable", it) }
+                }
+            }
+        if (recorder) {
+            listOf(R.id.rear_notification_actions, R.id.rear_notification_chronometer,
+                R.id.rear_notification_progress, R.id.rear_notification_subtext).forEach {
+                view.findViewById<View>(it)?.visibility = View.GONE
+            }
+        }
         nativeRoot.setOnClickListener { view.performClick() }
         nativeRoot.findViewById<View>(hostId("notification_container")).setOnClickListener { view.performClick() }
         nativeHost.layoutParams = (nativeHost.layoutParams as LinearLayout.LayoutParams).apply { height = 0; weight = 1f }
         nativeHost.removeAllViews()
         nativeHost.addView(nativeRoot)
         val footer = view.findViewById<LinearLayout>(R.id.rear_notification_footer)
-        footer.visibility = if (hasTaskControls || members.size > 1) View.VISIBLE else View.GONE
+        footer.visibility = if (hasTaskControls && !recorder || members.size > 1) View.VISIBLE else View.GONE
         footer.findViewWithTag<View>("rear_notification_group_toggle")?.let { footer.removeView(it) }
         if (members.size > 1) {
             footer.visibility = View.VISIBLE
