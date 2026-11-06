@@ -107,6 +107,7 @@ private class ProtocolState : AbstractCoroutineContextElement(Key) {
     val ready = ArrayDeque<StreamFrame>()
     var emitReady: (suspend (StreamFrame) -> Unit)? = null
     val responseTextDeltas = mutableMapOf<Int, StringBuilder>()
+    val responseReasoning = ResponsesReasoningParts()
     val responseCalls = java.util.concurrent.ConcurrentHashMap<Int, Pair<String, String>>()
     val encryptedOnly = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     val usage = linkedMapOf<String, JsonElement>()
@@ -152,10 +153,10 @@ private class ProtocolState : AbstractCoroutineContextElement(Key) {
         val compatibleResponse =
             if (parsed["type"]?.jsonPrimitive?.contentOrNull == "response.metadata") response
             else response?.let(::responsesMetadataDefaults)
-        val item = if (compatibleResponse !== response) JsonObject(
+        var item = if (compatibleResponse !== response) JsonObject(
             parsed + ("response" to requireNotNull(compatibleResponse))
         ) else parsed
-        val normalized = if (item === parsed) raw else item.toString()
+        var normalized = if (item === parsed) raw else item.toString()
         val type = item["type"]?.jsonPrimitive?.contentOrNull
         fun rememberUsage(value: JsonElement?) {
             (value as? JsonObject)?.forEach { (k, v) -> usage[k] = v }
@@ -246,6 +247,8 @@ private class ProtocolState : AbstractCoroutineContextElement(Key) {
                 "message_stop" -> stopped = true
             }
         } else if (protocol == Protocol.RESPONSES) {
+            item = responseReasoning.observe(item, ready)
+            normalized = if (item === parsed) raw else item.toString()
             val response = item["response"] as? JsonObject
             rememberUsage(response?.get("usage"))
             if (type == "response.metadata") {
@@ -338,6 +341,7 @@ private class ProtocolState : AbstractCoroutineContextElement(Key) {
                 }
             }
             if (type in listOf("response.completed", "response.incomplete")) {
+                responseReasoning.requireComplete()
                 finishReason = if (type == "response.incomplete")
                     response?.get("incomplete_details")?.jsonObject?.get("reason")?.jsonPrimitive?.contentOrNull
                         ?: "incomplete"
@@ -582,6 +586,8 @@ internal class PatchedOpenAIClient(
     ): Flow<StreamFrame> {
         val state = ProtocolState()
         return channelFlow {
+            val responses =
+                model.supports(ai.koog.prompt.llm.LLMCapability.OpenAIEndpoint.Responses)
             val completions =
                 java.util.concurrent.ConcurrentLinkedQueue<StreamFrame.CompleteFrame>()
             state.emitReady =
@@ -603,8 +609,6 @@ internal class PatchedOpenAIClient(
                     } ?: frame)
 
                     is StreamFrame.End -> {
-                        val responses =
-                            model.supports(ai.koog.prompt.llm.LLMCapability.OpenAIEndpoint.Responses)
                         require(if (responses) state.stopped else state.stopped || state.finishReason != null) {
                             "OpenAI stream ended without a protocol completion marker"
                         }
@@ -620,7 +624,21 @@ internal class PatchedOpenAIClient(
                 }
             }
             require(state.ended) { "OpenAI stream ended before final metadata" }
-            completions.toList().sortedBy { it.index ?: Int.MAX_VALUE }.forEach { send(it) }
+            val completed = completions.toList()
+            // Chat indices identify choices, not content blocks. Koog flushes a text segment
+            // when reasoning/tools begin, so one choice can have several TextComplete frames.
+            // Match the already-streamed choice text; keep the first text's position and never
+            // deduplicate equal segments. Responses retains its distinct output-item identities.
+            val chatText = mutableMapOf<Int?, StringBuilder>()
+            if (!responses) completed.filterIsInstance<StreamFrame.TextComplete>().forEach {
+                chatText.getOrPut(it.index) { StringBuilder() }.append(it.text)
+            }
+            val normalized = completed.mapNotNull { frame ->
+                if (!responses && frame is StreamFrame.TextComplete) {
+                    chatText.remove(frame.index)?.let { frame.copy(text = it.toString()) }
+                } else frame
+            }
+            normalized.sortedBy { it.index ?: Int.MAX_VALUE }.forEach { send(it) }
             send(requireNotNull(end))
         }.flowOn(state)
     }

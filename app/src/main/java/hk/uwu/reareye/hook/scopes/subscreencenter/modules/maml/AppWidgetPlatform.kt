@@ -17,13 +17,16 @@ import android.widget.AdapterView
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import org.json.JSONObject
+import hk.uwu.reareye.hook.support.YLog
 
 /** Uses the hooked application's Context, package and UID, never the module application's identity. */
 internal class AppWidgetPlatform(context: Context) : WidgetPlatform {
     private val context = context.applicationContext ?: context
     private val preferences =
         this.context.getSharedPreferences("reareye.maml.appwidget.v1", Context.MODE_PRIVATE)
+    private val bindings = WidgetBindingStore(preferences) { failure ->
+        YLog.warn("AppWidget typed preference read failed; restored binding from validated snapshot", failure)
+    }
     private val manager = AppWidgetManager.getInstance(this.context)
     private val hostId: Int = preferences.getInt("host_id", 0x52455747).also {
         check(preferences.edit().putInt("host_id", it).commit()) { "Cannot persist widget host ID" }
@@ -51,30 +54,13 @@ internal class AppWidgetPlatform(context: Context) : WidgetPlatform {
     }.getOrNull()
     val sessions = WidgetSessions(this)
 
-    override fun read(key: String): WidgetBinding? {
-        val value = preferences.getString("binding:$key", null) ?: return null
-        val json = JSONObject(value)
-        val phase = json.optString("phase").takeIf { it.isNotEmpty() }?.let { value ->
-            WidgetPhase.entries.firstOrNull { it.name == value }
-        }
-        return WidgetBinding(
-            json.getInt("id"),
-            json.getString("provider"),
-            json.getBoolean("complete"),
-            phase
-        )
+    override fun reportFailure(operation: String, throwable: Throwable) {
+        runCatching { YLog.warn("AppWidget platform failed: operation=$operation", throwable) }
     }
 
-    override fun write(key: String, binding: WidgetBinding?) {
-        val editor = preferences.edit()
-        if (binding == null) editor.remove("binding:$key")
-        else editor.putString(
-            "binding:$key", JSONObject().put("id", binding.id)
-                .put("provider", binding.provider).put("complete", binding.complete)
-                .put("phase", binding.phase?.name).toString()
-        )
-        check(editor.commit()) { "Cannot persist widget binding" }
-    }
+    override fun read(key: String): WidgetBinding? = bindings.read(key)
+
+    override fun write(key: String, binding: WidgetBinding?) = bindings.write(key, binding)
 
     /** Disabled by default; preference switch is shared with the hooked host, not module prefs. */
     override fun diagnose(
@@ -171,10 +157,11 @@ internal class AppWidgetPlatform(context: Context) : WidgetPlatform {
         val released = runCatching {
             viewRegistry.release(id, view, removeSingle = {
                 val method = removeListener
-                method != null && runCatching { method.invoke(host, id) }.isSuccess
+                method != null && runCatching { method.invoke(host, id) }
+                    .onFailure { reportFailure("remove-listener", it) }.isSuccess
             }, clearAll = host::releaseAllViews)
         }.getOrElse {
-            Log.w("REAREye.AppWidget", "Vendor host view cleanup failed for $id", it)
+            reportFailure("release-host-view", it)
             false
         }
         if (!released) Log.w(
@@ -279,7 +266,9 @@ internal class AppWidgetFitHostView(context: Context, private val providerDensit
         if (callback != null && size != lastNotified) {
             runCatching { callback(size) }
                 .onSuccess { lastNotified = size }
-                .onFailure { Log.w("REAREye.AppWidget", "Natural widget size update failed", it) }
+                .onFailure { error ->
+                    runCatching { YLog.warn("AppWidget natural size update failed", error) }
+                }
         }
     }
 
